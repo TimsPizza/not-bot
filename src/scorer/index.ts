@@ -80,10 +80,10 @@ class ScorerService {
     this.ruleFunctions.set("containsKeywords", this.checkContainsKeyWords); // Needs refinement
     // this.ruleFunctions.set("repeatedContent", this.checkRepeatedContent); // Needs context
     this.ruleFunctions.set("allCaps", this.checkAllCaps);
-    this.ruleFunctions.set(
-      "excessivePunctuation",
-      this.checkExcessivePunctuation,
-    );
+    // this.ruleFunctions.set(
+    //   "excessivePunctuation",
+    //   this.checkExcessivePunctuation,
+    // );
     this.ruleFunctions.set("codeBlock", this.checkCodeBlock);
     this.ruleFunctions.set("urlLink", this.checkUrlLink);
     this.ruleFunctions.set("botAuthor", this.checkBotAuthor);
