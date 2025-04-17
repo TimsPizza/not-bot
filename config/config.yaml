@@ -1,0 +1,31 @@
+# config/config.yaml
+
+# --- Core Settings ---
+# discordToken: loaded from DISCORD_BOT_TOKEN env var
+# openRouterApiKey: loaded from OPENROUTER_API_KEY env var
+
+# --- LLM Models (via OpenRouter) ---
+primaryLlmModel: "openai/gpt-4o" # Model for generating main responses
+secondaryLlmModel: "anthropic/claude-3-haiku-20240307" # Lightweight model for evaluation
+
+# --- Buffer Settings ---
+bufferSize: 10 # Max messages in buffer before forced flush
+bufferTimeWindowMs: 2000 # Max time (ms) a message stays in buffer before flush
+
+# --- Scoring Thresholds ---
+scoreThresholdRespond: 80 # Score >= this triggers immediate response
+scoreThresholdDiscard: -20 # Score <= this triggers discard
+
+# --- Context Management ---
+contextMaxMessages: 20 # Max number of messages to keep in channel context
+contextMaxAgeSeconds: 3600 # Max age (seconds) for messages in context (1 hour)
+
+# --- Logging ---
+logLevel: "debug" # Options: trace, debug, info, warn, error
+
+# --- File Paths (Absolute paths recommended, required if not using defaults) ---
+# These paths MUST be absolute paths or correctly resolvable by the environment.
+# If using environment variables (e.g., PERSONA_PROMPT_FILE_PATH), they take precedence.
+personaPromptFile: "" # ABSOLUTE path to prompts.yaml
+scoringRulesFile: "" # ABSOLUTE path to scoring_rules.json
+contextStoragePath: "" # ABSOLUTE path to directory for context files

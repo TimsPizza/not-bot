@@ -1,0 +1,54 @@
+{
+  "mentionBot": {
+    "weight": 9999,
+    "description": "消息中 @ 了机器人"
+  },
+  "isQuestion": {
+    "weight": 25,
+    "description": "消息包含问号或疑问词（如 怎么, 什么, 谁, 为什么）"
+  },
+  "isReplyToBot": {
+    "weight": 50,
+    "description": "消息是回复机器人的上一条消息"
+  },
+  "lengthLong": {
+    "weight": 25,
+    "description": "消息长度较长（例如 > 10 字符）"
+  },
+  "lengthShort": {
+    "weight": 0,
+    "description": "消息长度过短（例如 < 5 字符）"
+  },
+  "containsKeywords": {
+    "weight": 20,
+    "description": "消息包含特定关键词（例如 'BOT', '机器人'）"
+  },
+  "repeatedContent": {
+    "weight": -2,
+    "description": "消息内容与最近上下文中的消息高度相似"
+  },
+  "allCaps": {
+    "weight": -10,
+    "description": "消息大部分是或全部是大写字母"
+  },
+  "excessivePunctuation": {
+    "weight": -15,
+    "description": "消息包含过多的标点符号或表情符号"
+  },
+  "codeBlock": {
+    "weight": 10,
+    "description": "消息包含代码块"
+  },
+  "urlLink": {
+    "weight": 0,
+    "description": "消息包含 URL 链接（中性或略低优先级）"
+  },
+  "botAuthor": {
+    "weight": -9999,
+    "description": "消息是机器人自己发的（确保不响应自身）"
+  },
+  "nonTextMessage": {
+    "weight": -9999,
+    "description": "消息不是纯文本（例如只有附件或嵌入）"
+  }
+}

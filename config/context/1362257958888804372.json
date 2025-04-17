@@ -1,0 +1,19 @@
+{
+  "channelId": "1362257958888804372",
+  "messages": [
+    {
+      "id": "1362257963984748647",
+      "channelId": "1362257958888804372",
+      "guildId": null,
+      "authorId": "792922327750934538",
+      "authorUsername": "martinatm",
+      "content": "hi",
+      "timestamp": 1744858008143,
+      "mentionedUsers": [],
+      "mentionedRoles": [],
+      "mentionsEveryone": false,
+      "isBot": false
+    }
+  ],
+  "lastUpdatedAt": 1744858008214
+}

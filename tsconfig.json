@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    /* Base Options: */
+    "esModuleInterop": true, // Enables compatibility with CommonJS modules
+    "skipLibCheck": true, // Skip type checking of declaration files
+    "target": "ES2022", // Target latest ECMAScript features supported by Node.js LTS
+    "allowJs": true, // Allow JavaScript files to be compiled
+    "resolveJsonModule": true, // Include modules imported with .json extension
+    "moduleDetection": "force", // Treat files as modules even without imports/exports
+    "isolatedModules": true, // Ensure files can be safely transpiled without relying on other imports
+
+    /* Strictness */
+    "strict": true, // Enable all strict type-checking options
+    "noUncheckedIndexedAccess": true, // Add 'undefined' to index signatures
+    "checkJs": true, // Report errors in .js files
+
+    /* If NOT transpiling with TypeScript: */
+    "module": "NodeNext", // Use Node.js's native ECMAScript module system
+    "noEmit": true, // Do not emit output files (we'll use ts-node or similar for execution)
+
+    /* If your code runs in the DOM: */
+    // "lib": ["es2022", "dom", "dom.iterable"],
+
+    /* If you're building for a library: */
+    // "declaration": true,
+    // "declarationMap": true,
+    // "sourceMap": true,
+    // "outDir": "dist",
+
+    /* If you're building for a monorepo: */
+    // "composite": true,
+    // "rootDir": "src", // Specify the root directory of source files
+
+    /* Project Structure */
+    "rootDir": "src", // Specify the root directory of source files
+    "baseUrl": ".", // Base directory to resolve non-relative module names
+    "paths": { // Define module path aliases
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*"], // Which files TypeScript should check
+  "exclude": ["node_modules", "dist"] // Which files TypeScript should skip
+}
