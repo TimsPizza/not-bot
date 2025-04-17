@@ -167,7 +167,7 @@ class LLMEvaluatorService {
       return result;
 
     } catch (error) {
-      loggerService.logger.error(`Error during LLM evaluation process:`, error);
+      loggerService.logger.error(`Error during LLM evaluation process: ${error}`);
       return null;
     }
   }

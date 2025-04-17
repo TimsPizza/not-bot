@@ -13,8 +13,8 @@ bufferSize: 10 # Max messages in buffer before forced flush
 bufferTimeWindowMs: 2000 # Max time (ms) a message stays in buffer before flush
 
 # --- Scoring Thresholds ---
-scoreThresholdRespond: 80 # Score >= this triggers immediate response
-scoreThresholdDiscard: -20 # Score <= this triggers discard
+scoreThresholdRespond: 50 # Score >= this triggers immediate response
+scoreThresholdDiscard: -10 # Score <= this triggers discard
 
 # --- Context Management ---
 contextMaxMessages: 20 # Max number of messages to keep in channel context

@@ -146,3 +146,9 @@ data/
 
 # Build output directory (if you compile TypeScript to JS)
 dist/
+
+# Ignore all JSON files in the context directory
+[0-9]*.json
+
+# Ignore VS Code settings directory
+.vscode/

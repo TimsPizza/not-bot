@@ -1,6 +1,7 @@
 // src/client.ts
 import {
   Client,
+  DMChannel,
   Events,
   GatewayIntentBits,
   Message,
@@ -330,7 +331,15 @@ class BotClient {
           );
         }
         // -----------------------------------------
-      } else {
+      }
+      else if (channel instanceof DMChannel) {
+        // Handle DMs
+        await channel.send(content);
+        loggerService.logger.info(
+          `Sent DM response to user in channel ${channelId}: "${content}"`,
+        );
+      }
+      else {
         loggerService.logger.warn(
           `Cannot send response: Channel ${channelId} is not a text channel.`,
         );
