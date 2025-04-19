@@ -136,9 +136,17 @@ class BotClient {
     };
 
     // 3. Update Context (do this regardless of buffering/scoring)
-    contextManagerService.updateContext(simpleMessage.channelId, [
-      simpleMessage,
-    ]);
+    // Pass serverId (guildId) if available
+    if (simpleMessage.guildId) {
+        contextManagerService.updateContext(simpleMessage.channelId, simpleMessage.guildId, [
+          simpleMessage,
+        ]);
+    } else {
+        // Handle DM context update if needed, or log a warning if DMs aren't fully supported for context
+        loggerService.logger.warn(`Attempted to update context for DM channel ${simpleMessage.channelId}. Server-specific features might be limited.`);
+        // contextManagerService.updateContext(simpleMessage.channelId, 'DM', [simpleMessage]); // Example if using a placeholder ID for DMs
+    }
+
 
     // 4. Add to Buffer
     bufferQueueService.addMessage(simpleMessage);
@@ -445,10 +453,15 @@ class BotClient {
             isBot: true,
             respondedTo: true, // Mark bot's own message as 'responded' (it's the response itself)
           };
-          contextManagerService.updateContext(channelId, [botSimpleMessage]);
-          loggerService.logger.debug(
-            `Added own response (ID: ${sentMessage.id}) to context for channel ${channelId}`,
-          );
+          // Pass serverId (guildId) if available when adding bot's own message
+          if (botSimpleMessage.guildId) {
+              contextManagerService.updateContext(channelId, botSimpleMessage.guildId, [botSimpleMessage]);
+              loggerService.logger.debug(
+                `Added own response (ID: ${sentMessage.id}) to context for channel ${channelId}`,
+              );
+          } else {
+               loggerService.logger.warn(`Could not determine guildId when adding bot response ${sentMessage.id} to context for channel ${channelId}.`);
+          }
         }
         // -----------------------------------------
       } else if (channel instanceof DMChannel) {

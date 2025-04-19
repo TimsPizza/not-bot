@@ -61,6 +61,7 @@ export interface LLMEvaluationResult {
  * For simplicity, starting with channel-based context. User-specific might be added later.
  */
 export interface ChannelContext {
+  serverId: string; // Added server ID for path construction
   channelId: string;
   messages: SimpleMessage[]; // Recent messages in the channel context
   lastUpdatedAt: number; // Unix timestamp

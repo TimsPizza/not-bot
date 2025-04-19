@@ -3,17 +3,18 @@ import fs from "fs/promises"; // Use promises for async operations
 import path from "path";
 import loggerService from "@/logger";
 import configService from "@/config"; // Import config service instance
-import { SimpleMessage, ChannelContext, AppConfig } from "@/types";
+import { SimpleMessage, ChannelContext, AppConfig, ServerConfig } from "@/types"; // Added ServerConfig
+import fsExtra from 'fs-extra'; // Use fs-extra for ensureDir
 
 class ContextManagerService {
   private static instance: ContextManagerService;
 
-  // In-memory cache for active contexts
+  // In-memory cache for active contexts <channelId, ChannelContext>
   private contextCache = new Map<string, ChannelContext>();
 
-  private contextStoragePath: string | null = null;
-  private contextMaxMessages: number = 20;
-  private contextMaxAgeSeconds: number = 3600;
+  private serverDataPath: string | null = null; // Base path for all server data
+  private contextMaxMessages: number = 20; // Global default
+  private contextMaxAgeSeconds: number = 3600; // Global default
   private isInitialized = false;
 
   private constructor() {
@@ -46,25 +47,26 @@ class ContextManagerService {
       // For simplicity here, we assume config is ready shortly after app start.
       await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
 
-      const config = configService.getConfig(); // Get config from the service
-      this.contextStoragePath = config.contextStoragePath;
-      this.contextMaxMessages = config.contextMaxMessages;
-      this.contextMaxAgeSeconds = config.contextMaxAgeSeconds;
+      const config = configService.getConfig(); // Get global config from the service
+      this.serverDataPath = config.serverDataPath; // Get the base path for server data
+      this.contextMaxMessages = config.contextMaxMessages; // Keep global defaults
+      this.contextMaxAgeSeconds = config.contextMaxAgeSeconds; // Keep global defaults
 
-      if (!this.contextStoragePath) {
+      if (!this.serverDataPath) {
         loggerService.logger.error(
-          "Context storage path is not defined in configuration. Disk persistence disabled.",
+          "SERVER_DATA_PATH is not defined in configuration. Disk persistence for context disabled.",
         );
         this.isInitialized = true; // Mark as initialized even if path is missing
         return;
       }
 
-      await fs.mkdir(this.contextStoragePath, { recursive: true });
+      // Ensure the base server data path exists (individual server dirs created on demand)
+      await fsExtra.ensureDir(this.serverDataPath);
       loggerService.logger.info(
-        `Context storage directory ensured: ${this.contextStoragePath}`,
+        `Base server data directory ensured: ${this.serverDataPath}`,
       );
 
-      // Optional: Load existing contexts from disk on startup
+      // Load existing contexts from disk on startup
       await this.loadAllContextsFromDisk();
 
       this.isInitialized = true;
@@ -73,7 +75,7 @@ class ContextManagerService {
       loggerService.logger.error(
         `Failed to initialize ContextManagerService: ${error.message}`,
       );
-      this.contextStoragePath = null; // Disable disk operations if init fails
+      this.serverDataPath = null; // Disable disk operations if init fails
       this.isInitialized = true; // Mark as initialized even on error to prevent retries
     }
   }
@@ -90,38 +92,58 @@ class ContextManagerService {
 
   /**
    * @description Updates the context for a given channel ID with new messages.
-   * Applies FIFO logic based on max messages and max age.
+   * Applies FIFO logic based on max messages and max age (potentially server-specific).
    * @param channelId The ID of the channel.
+   * @param serverId The ID of the server (guild) this channel belongs to. Required for storage path.
    * @param newMessages An array of new SimpleMessage objects to add.
    */
-  public updateContext(channelId: string, newMessages: SimpleMessage[]): void {
+  public updateContext(channelId: string, serverId: string, newMessages: SimpleMessage[]): void {
+    if (!serverId) {
+        loggerService.logger.error(`Cannot update context for channel ${channelId}: serverId is missing.`);
+        return;
+    }
     if (!newMessages || newMessages.length === 0) {
       return;
     }
 
+    // --- Get Server-Specific Limits (or use global defaults) ---
+    const serverConfig = configService.getServerConfig(serverId);
+    const maxMessages = serverConfig.maxContextMessages ?? this.contextMaxMessages;
+    // TODO: Implement server-specific max age if needed, currently using global
+    const maxAgeSeconds = this.contextMaxAgeSeconds;
+    // ---
+
     const now = Date.now();
-    const maxAgeTimestamp = now - this.contextMaxAgeSeconds * 1000;
+    const maxAgeTimestamp = now - maxAgeSeconds * 1000;
 
     let currentContext = this.contextCache.get(channelId);
 
     if (!currentContext) {
+      // Ensure serverId is included when creating new context
       currentContext = {
+        serverId: serverId, // Store serverId
         channelId: channelId,
         messages: [],
         lastUpdatedAt: now,
       };
+    } else {
+      // Ensure existing context has serverId (for contexts loaded before this change)
+      if (!currentContext.serverId) {
+          currentContext.serverId = serverId;
+      }
     }
+
 
     // Add new messages and filter out old ones
     const updatedMessages = [...currentContext.messages, ...newMessages].filter(
       (msg) => msg.timestamp >= maxAgeTimestamp,
     ); // Filter by age
 
-    // Apply max message limit (FIFO)
-    if (updatedMessages.length > this.contextMaxMessages) {
+    // Apply max message limit (FIFO) using potentially server-specific limit
+    if (updatedMessages.length > maxMessages) {
       updatedMessages.splice(
         0,
-        updatedMessages.length - this.contextMaxMessages,
+        updatedMessages.length - maxMessages,
       );
     }
 
@@ -171,15 +193,15 @@ class ContextManagerService {
       );
       return;
     }
-    if (!this.contextStoragePath) {
+    if (!this.serverDataPath) {
       loggerService.logger.warn(
-        "Context storage path not configured. Skipping flush to disk.",
+        "SERVER_DATA_PATH not configured. Skipping flush to disk.",
       );
       return;
     }
 
     loggerService.logger.info(
-      `Flushing ${this.contextCache.size} contexts to disk at ${this.contextStoragePath}...`,
+      `Flushing ${this.contextCache.size} contexts to disk under ${this.serverDataPath}...`,
     );
     const flushPromises: Promise<void>[] = [];
 
@@ -200,85 +222,114 @@ class ContextManagerService {
   /**
    * @description Saves a single channel's context to a JSON file.
    * @param channelId The channel ID.
-   * @param context The ChannelContext object.
+   * @param context The ChannelContext object (must include serverId).
    */
   private async saveContextToDisk(channelId: string, context: ChannelContext): Promise<void> {
-     if (!this.contextStoragePath) return; // Guard against missing path
+     if (!this.serverDataPath || !context.serverId) {
+         loggerService.logger.error(`Cannot save context for channel ${channelId}: serverDataPath or context.serverId is missing.`);
+         return;
+     }
 
-     const filePath = path.join(this.contextStoragePath, `${channelId}.json`);
+     const serverContextPath = path.join(this.serverDataPath, context.serverId, 'context');
+     const filePath = path.join(serverContextPath, `${channelId}.json`);
      const fileContent = JSON.stringify(context, null, 2); // Pretty print JSON
+
      try {
+         await fsExtra.ensureDir(serverContextPath); // Ensure server's context directory exists
          await fs.writeFile(filePath, fileContent, "utf8");
-         loggerService.logger.debug(`Context for channel ${channelId} saved to ${filePath}`);
+         loggerService.logger.debug(`Context for channel ${channelId} (Server: ${context.serverId}) saved to ${filePath}`);
      } catch (err) {
-         loggerService.logger.error(`Failed to save context for channel ${channelId} to ${filePath}: ${err}`);
+         loggerService.logger.error(`Failed to save context for channel ${channelId} (Server: ${context.serverId}) to ${filePath}: ${err}`);
          // Optionally re-throw or handle specific errors
      }
   }
 
 
   /**
-   * @description Loads all context files from the storage directory into the cache.
+   * @description Loads all context files from the server data directory structure into the cache.
    */
   private async loadAllContextsFromDisk(): Promise<void> {
-    if (!this.contextStoragePath) {
-      // Already logged during initialization if path is missing
-      return;
+    if (!this.serverDataPath) {
+      return; // Path not configured
     }
-    loggerService.logger.info(
-      `Loading contexts from disk: ${this.contextStoragePath}`,
-    );
+    loggerService.logger.info(`Scanning for contexts under: ${this.serverDataPath}`);
+    let totalLoadedCount = 0;
     try {
-      const files = await fs.readdir(this.contextStoragePath);
-      const jsonFiles = files.filter((file) => file.endsWith(".json"));
-      let loadedCount = 0;
-      const now = Date.now();
-      const maxAgeTimestamp = now - this.contextMaxAgeSeconds * 1000;
+      const serverDirs = await fs.readdir(this.serverDataPath, { withFileTypes: true });
 
-      for (const file of jsonFiles) {
-        const filePath = path.join(this.contextStoragePath, file);
-        try {
-          const fileContent = await fs.readFile(filePath, "utf8");
-          const context = JSON.parse(fileContent) as ChannelContext;
+      for (const serverDir of serverDirs) {
+        if (serverDir.isDirectory()) {
+          const serverId = serverDir.name;
+          const serverContextPath = path.join(this.serverDataPath, serverId, 'context');
 
-          if (context && context.channelId && Array.isArray(context.messages)) {
-            // Filter old messages on load
-            context.messages = context.messages.filter(
-              (msg) => msg.timestamp >= maxAgeTimestamp,
-            );
-            // Ensure context isn't empty after filtering before caching
-            if (context.messages.length > 0) {
-              this.contextCache.set(context.channelId, context);
-              loadedCount++;
-            } else {
-              loggerService.logger.debug(
-                `Context file ${filePath} contained only expired messages. Not loaded.`,
-              );
-              // Optionally delete the empty context file
-              // fs.unlink(filePath).catch(err => loggerService.logger.warn(`Failed to delete empty context file ${filePath}: ${err}`));
+          if (fsExtra.existsSync(serverContextPath)) {
+            loggerService.logger.debug(`Loading contexts for server ${serverId} from ${serverContextPath}`);
+            try {
+                const files = await fs.readdir(serverContextPath);
+                const jsonFiles = files.filter((file) => file.endsWith(".json"));
+                let serverLoadedCount = 0;
+                const now = Date.now();
+                const maxAgeTimestamp = now - this.contextMaxAgeSeconds * 1000;
+
+                for (const file of jsonFiles) {
+                    const filePath = path.join(serverContextPath, file);
+                    try {
+                    const fileContent = await fs.readFile(filePath, "utf8");
+                    const context = JSON.parse(fileContent) as ChannelContext;
+
+                    // Validate loaded context structure
+                    if (context && context.channelId && Array.isArray(context.messages)) {
+                        // Ensure serverId matches directory (or add it if missing from older format)
+                        context.serverId = serverId;
+
+                        // Filter old messages on load
+                        context.messages = context.messages.filter(
+                        (msg) => msg.timestamp >= maxAgeTimestamp,
+                        );
+
+                        // Ensure context isn't empty after filtering before caching
+                        if (context.messages.length > 0) {
+                        this.contextCache.set(context.channelId, context);
+                        serverLoadedCount++;
+                        } else {
+                        loggerService.logger.debug(
+                            `Context file ${filePath} contained only expired messages. Not loaded.`,
+                        );
+                        // Optionally delete the empty context file
+                        // fs.unlink(filePath).catch(err => loggerService.logger.warn(`Failed to delete empty context file ${filePath}: ${err}`));
+                        }
+                    } else {
+                        loggerService.logger.warn(
+                        `Skipping invalid context file: ${filePath}`,
+                        );
+                    }
+                    } catch (readError) {
+                    loggerService.logger.error(
+                        `Failed to read or parse context file ${filePath}: ${readError}`,
+                    );
+                    }
+                }
+                 if (serverLoadedCount > 0) {
+                     loggerService.logger.info(`Loaded ${serverLoadedCount} non-empty contexts for server ${serverId}.`);
+                     totalLoadedCount += serverLoadedCount;
+                 }
+
+            } catch (serverReadError) {
+                 loggerService.logger.error(`Failed to read context directory for server ${serverId} at ${serverContextPath}: ${serverReadError}`);
             }
-          } else {
-            loggerService.logger.warn(
-              `Skipping invalid context file: ${filePath}`,
-            );
           }
-        } catch (readError) {
-          loggerService.logger.error(
-            `Failed to read or parse context file ${filePath}: ${readError}`,
-          );
         }
       }
-      loggerService.logger.info(
-        `Loaded ${loadedCount} non-empty contexts from disk.`,
-      );
+       loggerService.logger.info(`Finished loading contexts. Total loaded: ${totalLoadedCount}.`);
+
     } catch (error: any) {
       if (error.code === "ENOENT") {
         loggerService.logger.info(
-          "Context storage directory does not exist yet. No contexts loaded.",
+          "Base server data directory does not exist yet. No contexts loaded.",
         );
       } else {
         loggerService.logger.error(
-          `Failed to read context storage directory ${this.contextStoragePath}: ${error}`,
+          `Failed to read base server data directory ${this.serverDataPath}: ${error}`,
         );
       }
     }
