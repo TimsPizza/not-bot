@@ -47,9 +47,11 @@ export enum ScoreDecision {
 
 /**
  * @description The output format for the lightweight LLM evaluation module.
+ * Includes a score indicating the confidence/appropriateness of responding.
  */
 export interface LLMEvaluationResult {
-  should_respond: boolean;
+  should_respond: boolean; // Kept for backward compatibility or simple cases, but response_score is preferred
+  response_score: number; // Score from 0.0 to 1.0 indicating how strongly the LLM suggests responding
   target_message_id: string | null; // ID of the message selected for response, if any
   reason: string; // Explanation from the LLM
 }
@@ -101,16 +103,68 @@ export interface AppConfig {
   contextMaxMessages: number; // Max messages to keep in context
   contextMaxAgeSeconds: number; // Max age of context messages (seconds)
   logLevel: "info" | "warn" | "error" | "debug" | "trace";
-  personaPromptFile: string; // Path to persona prompt file (loaded separately)
-  scoringRulesFile: string; // Absolute path to scoring rules JSON file
-  contextStoragePath: string; // Absolute path to store context JSON files
+  personaPromptFile: string; // Path to BASE persona prompt template file (e.g., prompts.yaml)
+  scoringRulesFile: string; // Path to BASE scoring rules JSON file
+  // Paths below are now expected to be provided via environment variables
+  serverDataPath: string; // Base path for all server-specific data (e.g., data/)
+  // presetPersonasPath: string; // Path to the directory containing preset persona JSON files (e.g., personas/)
 }
 
 /**
  * @description Structure for persona prompts (prompts.yaml or similar).
+ * These will likely become templates.
  */
 export interface PersonaPrompts {
-  systemPrompt: string; // Base system prompt defining the persona
-  evaluationPrompt: string; // Prompt for the LLMEvaluator
+  systemPrompt: string; // Base system prompt template defining the persona
+  evaluationPrompt: string; // Prompt template for the LLMEvaluator
   // Add more specific prompts as needed (e.g., for specific commands or situations)
 }
+
+/**
+ * @description Defines the structure for a specific server's configuration override.
+ * @description Defines the type of persona reference.
+ */
+export enum PersonaType {
+    Preset = "preset", // References a persona in the global preset directory
+    Custom = "custom"  // References a persona defined within the server's data directory
+}
+
+/**
+ * @description Defines how a persona is referenced in the server config.
+ */
+export interface PersonaRef {
+    type: PersonaType;
+    id: string; // ID of the preset or custom persona file (without .json extension)
+}
+
+/**
+ * @description Defines the structure for a specific server's configuration.
+ * Stored in <serverDataPath>/<serverId>/config.json
+ */
+export interface ServerConfig {
+  serverId: string;
+  responsiveness: number; // Default: 1.0
+  allowedChannels: string[] | null; // Default: null (all allowed)
+  personaMappings: {
+      [channelIdOrDefault: string]: PersonaRef; // Key is channel ID or 'default' for server-wide setting
+                                                // Value references a preset or custom persona
+  };
+  maxContextMessages?: number; // Optional override for global setting
+  maxDailyResponses?: number; // Optional override for global setting (implementation TBD)
+  // Add other server-specific settings here
+}
+
+/**
+ * @description Defines the structure for a persona definition (used for both presets and custom).
+ * Preset: Stored in <presetPersonasPath>/<id>.json
+ * Custom: Stored in <serverDataPath>/<serverId>/personas/<id>.json
+ */
+export interface PersonaDefinition {
+    id: string; // Unique identifier (filename without extension)
+    name: string; // Display name
+    description: string; // Brief description
+    details: string; // The core persona definition text to be injected into prompt templates
+}
+
+// Renamed PersonaPreset to PersonaDefinition for consistency
+export type PersonaPreset = PersonaDefinition;

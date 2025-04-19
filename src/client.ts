@@ -7,15 +7,24 @@ import {
   Message,
   Partials,
   TextChannel,
+  Interaction, // Added
+  CacheType, // Added
+  Channel,
+  ChannelType, // Added
 } from "discord.js";
 import loggerService from "@/logger";
-import configService from "@/config";
+import configService, { ConfigService } from "@/config"; // Import class type
 import contextManagerService from "@/context";
 import bufferQueueService from "@/buffer";
 import scorerService from "@/scorer"; // Ensure this uses getDecisionForBatch
 import llmEvaluatorService from "@/llm/llm_evaluator";
 import responderService from "@/llm/responder";
-import { SimpleMessage, ScoreDecision } from "@/types";
+import {
+  SimpleMessage,
+  ScoreDecision,
+  PersonaType,
+  PersonaDefinition,
+} from "@/types";
 
 class BotClient {
   private client: Client;
@@ -52,6 +61,10 @@ class BotClient {
     });
 
     this.client.on(Events.MessageCreate, this.handleMessageCreate.bind(this));
+    this.client.on(
+      Events.InteractionCreate,
+      this.handleInteractionCreate.bind(this),
+    ); // Added
 
     this.client.on(Events.Error, (error) => {
       loggerService.logger.error("Discord client error:", error);
@@ -83,6 +96,22 @@ class BotClient {
       return;
     }
 
+    // --- Server-Specific Configuration Check ---
+    if (message.guildId) {
+      const serverConfig = configService.getServerConfig(message.guildId);
+      if (
+        serverConfig.allowedChannels &&
+        serverConfig.allowedChannels.length > 0 &&
+        !serverConfig.allowedChannels.includes(message.channelId)
+      ) {
+        loggerService.logger.debug(
+          `Ignoring message ${message.id} from channel ${message.channelId} in guild ${message.guildId} as it's not an allowed channel.`,
+        );
+        return; // Ignore message if channel is restricted
+      }
+    }
+    // --- End Configuration Check ---
+
     // 2. Convert to SimpleMessage
     const simpleMessage: SimpleMessage = {
       id: message.id,
@@ -103,7 +132,7 @@ class BotClient {
             guildId: message.reference.guildId ?? null,
           }
         : undefined,
-      respondedTo: false // Initialize as false (optional, default is undefined)
+      respondedTo: false, // Initialize as false (optional, default is undefined)
     };
 
     // 3. Update Context (do this regardless of buffering/scoring)
@@ -139,6 +168,8 @@ class BotClient {
     // 3. Handle Batch Decision
     let shouldRespond = false;
     let finalTargetMessage: SimpleMessage | null = null; // Message to target, if any
+    // personaDefinition will be loaded later if needed
+    // const firstMessage = messages[0]; // Define later when known to be safe
 
     switch (batchDecision) {
       case ScoreDecision.Respond:
@@ -151,15 +182,18 @@ class BotClient {
         // Find the highest scoring message in the batch to potentially mark as responded to later
         let highestScore = -Infinity;
         let highestScoringMsgId: string | null = null;
-        scoringResults.forEach(r => {
-            if (r.score > highestScore) {
-                highestScore = r.score;
-                highestScoringMsgId = r.messageId;
-            }
+        scoringResults.forEach((r) => {
+          if (r.score > highestScore) {
+            highestScore = r.score;
+            highestScoringMsgId = r.messageId;
+          }
         });
-        finalTargetMessage = messages.find(msg => msg.id === highestScoringMsgId) || null;
+        finalTargetMessage =
+          messages.find((msg) => msg.id === highestScoringMsgId) || null;
         if (finalTargetMessage) {
-             loggerService.logger.debug(`Highest scoring message in batch (ID: ${finalTargetMessage.id}) identified for potential marking.`);
+          loggerService.logger.debug(
+            `Highest scoring message in batch (ID: ${finalTargetMessage.id}) identified for potential marking.`,
+          );
         }
         break;
 
@@ -175,11 +209,54 @@ class BotClient {
         );
         // -------------------------
 
-        // Pass both the current batch and the channel context to the evaluator
+        // --- Get server responsiveness ---
+        let responsiveness = 0.6; // Default if not in a guild
+        const firstMessage = messages[0]; // Get first message to find guildId
+        if (firstMessage?.guildId) {
+          const serverConfig = configService.getServerConfig(
+            firstMessage.guildId,
+          );
+          responsiveness = serverConfig.responsiveness;
+        } else {
+          loggerService.logger.warn(
+            `Could not determine guildId from message batch in channel ${channelId}. Using default responsiveness.`,
+          );
+        }
+        // --------------------------------
+
+        // --- Get Persona and Prompt Template ---
+        let evaluation_personaDefinition: PersonaDefinition | undefined; // Use temporary name for this scope
+        let evaluationPromptTemplate: string | undefined;
+        const evaluation_firstMessage = messages[0]; // Safe to access here if messages is not empty
+
+        if (evaluation_firstMessage?.guildId) {
+          evaluation_personaDefinition =
+            configService.getPersonaDefinitionForContext(
+              evaluation_firstMessage.guildId,
+              channelId,
+            );
+          const basePrompts = configService.getPersonaPrompts();
+          evaluationPromptTemplate = basePrompts?.evaluationPrompt;
+        }
+
+        if (!evaluation_personaDefinition || !evaluationPromptTemplate) {
+          loggerService.logger.error(
+            `Could not load persona definition or evaluation prompt template for ${evaluation_firstMessage?.guildId}/${channelId}. Cannot evaluate.`,
+          );
+          shouldRespond = false; // Cannot evaluate, so don't respond
+          break; // Exit the switch case for Evaluate
+        }
+        // -----------------------------------
+
+        // Pass responsiveness, prompt template, persona details, batch, and context to the evaluator
+        // Note: Pass the details loaded specifically for evaluation
         const evaluationResult = await llmEvaluatorService.evaluateMessages(
+          responsiveness,
+          evaluationPromptTemplate,
+          evaluation_personaDefinition.details,
           messages,
           channelContextMessages,
-        ); // Pass both arguments
+        );
 
         if (evaluationResult?.should_respond) {
           shouldRespond = true;
@@ -232,53 +309,96 @@ class BotClient {
 
     // 4. Generate and Send Response (if shouldRespond is true)
     if (shouldRespond) {
-      if (finalTargetMessage) {
-        loggerService.logger.info(
-          `Generating response targeting message ${finalTargetMessage.id}...`,
+      // --- Get Persona and Prompt Template for Responder ---
+      let systemPromptTemplate: string | undefined;
+      let personaDefinition: PersonaDefinition | undefined;
+      let personaDetails: string | undefined;
+      const firstMessage = messages.length > 0 ? messages[0] : null; // Safely get first message
+
+      if (firstMessage?.guildId) {
+        personaDefinition = configService.getPersonaDefinitionForContext(
+          firstMessage.guildId,
+          channelId,
         );
-      } else {
-        loggerService.logger.info(
-          `Generating general response for channel ${channelId} based on the latest context...`,
-        );
-      }
-
-      // Simulate typing before calling the potentially long-running LLM
-      try {
-        const channel = await this.client.channels.fetch(channelId);
-        if (channel instanceof TextChannel) {
-          await channel.sendTyping();
-        }
-      } catch (typingError) {
-         loggerService.logger.warn(`Failed to send typing indicator to channel ${channelId}: ${typingError}`);
-      }
-
-      // Pass the specific target message to the responder if available
-      const responseText = await responderService.generateResponse(
-        channelId,
-        finalTargetMessage ?? undefined, // Pass target message or undefined
-      );
-
-      if (responseText) {
-        // Send the response
-        await this.sendResponse(channelId, responseText);
-
-        // --- Mark the target message as responded to ---
-        // If we had a specific target (from high score or LLM eval), mark it.
-        if (finalTargetMessage) {
-          contextManagerService.markMessageAsResponded(channelId, finalTargetMessage.id);
-        } else {
-          // If it was a general response (ScoreDecision.Respond without specific target,
-          // or LLM eval decided general response), we might not mark anything,
-          // or potentially mark the last message in the *original batch*?
-          // For now, let's only mark specifically targeted messages.
-          loggerService.logger.debug(`General response sent for channel ${channelId}, no specific message marked as responded.`);
-        }
-        // ---------------------------------------------
-
+        const basePrompts = configService.getPersonaPrompts(); // Load base prompt templates
+        systemPromptTemplate = basePrompts?.systemPrompt;
+        personaDetails = personaDefinition?.details; // Get details from the resolved persona
       } else {
         loggerService.logger.warn(
-          `ResponderService did not generate a response for channel ${channelId}.`,
+          `Cannot determine guildId for response generation in channel ${channelId}. Cannot apply persona.`,
         );
+        // Prevent response if we can't determine the server context
+        shouldRespond = false;
+      }
+
+      // Validate that we have everything needed to generate a response
+      if (!personaDefinition || !systemPromptTemplate || !personaDetails) {
+        loggerService.logger.error(
+          `Could not load necessary persona/prompt info for ${firstMessage?.guildId}/${channelId}. Cannot generate response.`,
+        );
+        shouldRespond = false; // Cannot respond without full info
+      }
+      // ----------------------------------------------------
+
+      // Proceed only if we still should respond after loading persona info
+      if (shouldRespond && systemPromptTemplate && personaDetails) {
+        // Double-check shouldRespond status
+        if (finalTargetMessage) {
+          loggerService.logger.info(
+            `Generating response targeting message ${finalTargetMessage.id}...`,
+          );
+        } else {
+          loggerService.logger.info(
+            `Generating general response for channel ${channelId} based on the latest context...`,
+          );
+        }
+
+        // Simulate typing before calling the potentially long-running LLM
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel instanceof TextChannel) {
+            await channel.sendTyping();
+          }
+        } catch (typingError) {
+          loggerService.logger.warn(
+            `Failed to send typing indicator to channel ${channelId}: ${typingError}`,
+          );
+        }
+
+        // Pass the specific target message, template, and details to the responder
+        const responseText = await responderService.generateResponse(
+          channelId,
+          systemPromptTemplate, // Already checked for existence
+          personaDetails, // Already checked for existence
+          finalTargetMessage ?? undefined,
+        );
+
+        if (responseText) {
+          // Send the response
+          await this.sendResponse(channelId, responseText);
+
+          // --- Mark the target message as responded to ---
+          // If we had a specific target (from high score or LLM eval), mark it.
+          if (finalTargetMessage) {
+            contextManagerService.markMessageAsResponded(
+              channelId,
+              finalTargetMessage.id,
+            );
+          } else {
+            // If it was a general response (ScoreDecision.Respond without specific target,
+            // or LLM eval decided general response), we might not mark anything,
+            // or potentially mark the last message in the *original batch*?
+            // For now, let's only mark specifically targeted messages.
+            loggerService.logger.debug(
+              `General response sent for channel ${channelId}, no specific message marked as responded.`,
+            );
+          }
+          // ---------------------------------------------
+        } else {
+          loggerService.logger.warn(
+            `ResponderService did not generate a response for channel ${channelId}.`,
+          );
+        }
       }
     }
   }
@@ -323,7 +443,7 @@ class BotClient {
             mentionedRoles: [],
             mentionsEveryone: false,
             isBot: true,
-            respondedTo: true // Mark bot's own message as 'responded' (it's the response itself)
+            respondedTo: true, // Mark bot's own message as 'responded' (it's the response itself)
           };
           contextManagerService.updateContext(channelId, [botSimpleMessage]);
           loggerService.logger.debug(
@@ -331,15 +451,13 @@ class BotClient {
           );
         }
         // -----------------------------------------
-      }
-      else if (channel instanceof DMChannel) {
+      } else if (channel instanceof DMChannel) {
         // Handle DMs
         await channel.send(content);
         loggerService.logger.info(
           `Sent DM response to user in channel ${channelId}: "${content}"`,
         );
-      }
-      else {
+      } else {
         loggerService.logger.warn(
           `Cannot send response: Channel ${channelId} is not a text channel.`,
         );
@@ -386,6 +504,170 @@ class BotClient {
     // Destroy the client
     this.client.destroy();
     loggerService.logger.info("Bot client shut down.");
+  }
+
+  /**
+   * @description Handles incoming interactions (like slash commands).
+   * @param interaction The interaction object.
+   */
+  private async handleInteractionCreate(
+    interaction: Interaction<CacheType>,
+  ): Promise<void> {
+    if (!interaction.isChatInputCommand()) return; // Only handle slash commands for now
+    if (!interaction.inGuild()) {
+      await interaction.reply({
+        content: "Configuration commands can only be used in a server.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const { commandName, options, guildId, channel } = interaction;
+
+    if (commandName === "config") {
+      // Ensure the user has admin permissions (double check, although command definition should handle it)
+      if (!interaction.memberPermissions?.has("Administrator")) {
+        await interaction.reply({
+          content: "You need administrator permissions to use this command.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const subcommand = options.getSubcommand(true);
+      loggerService.logger.info(
+        `Received config command '${subcommand}' from user ${interaction.user.tag} in guild ${guildId}`,
+      );
+
+      try {
+        // Defer reply for potentially long operations
+        await interaction.deferReply({ ephemeral: true }); // Ephemeral so only user sees config changes
+
+        const serverConfig = configService.getServerConfig(guildId); // Get current or default config
+
+        switch (subcommand) {
+          case "allow_channel": {
+            const targetChannel = options.getChannel(
+              "channel",
+              true,
+            ) as Channel; // Type assertion needed
+            if (
+              !targetChannel ||
+              targetChannel.type !== ChannelType.GuildText
+            ) {
+              await interaction.editReply(
+                "Invalid channel provided. Please select a text channel.",
+              );
+              return;
+            }
+            const channelId = targetChannel.id;
+
+            let allowed = serverConfig.allowedChannels || []; // Initialize if null
+            let message: string;
+
+            if (allowed.includes(channelId)) {
+              // Remove channel
+              allowed = allowed.filter((id) => id !== channelId);
+              message = `Bot is now **disallowed** in channel <#${channelId}>.`;
+            } else {
+              // Add channel
+              allowed.push(channelId);
+              message = `Bot is now **allowed** in channel <#${channelId}>.`;
+            }
+            // If array becomes empty, set back to null to signify "all allowed" again? Or keep empty array for "none allowed"?
+            // Let's keep empty array for "none allowed" for clarity. If they want all, they need to remove all restrictions.
+            // If they want to allow all again, maybe a separate command `/config allow_all_channels`? For now, manage list.
+
+            serverConfig.allowedChannels = allowed.length > 0 ? allowed : null; // Set back to null if empty? Let's stick with null = all
+
+            const success = await configService.saveServerConfig(serverConfig);
+            await interaction.editReply(
+              success ? message : "Failed to save configuration.",
+            );
+            break;
+          }
+          case "set_responsiveness": {
+            const value = options.getNumber("value", true);
+            serverConfig.responsiveness = value;
+            const success = await configService.saveServerConfig(serverConfig);
+            await interaction.editReply(
+              success
+                ? `Responsiveness set to **${value}**.`
+                : "Failed to save configuration.",
+            );
+            break;
+          }
+          case "set_persona": {
+            const presetId = options.getString("persona", true);
+            const presetPersona = configService.getPresetPersona(presetId);
+
+            if (!presetPersona) {
+              await interaction.editReply(
+                `Error: Preset persona with ID '${presetId}' not found.`,
+              );
+              return;
+            }
+
+            // Set the default mapping to reference this preset
+            serverConfig.personaMappings["default"] = {
+              type: PersonaType.Preset,
+              id: presetId,
+            };
+
+            // TODO: Implement logic for setting channel-specific personas
+            // TODO: Implement logic for creating/setting custom personas
+
+            const success = await configService.saveServerConfig(serverConfig);
+            await interaction.editReply(
+              success
+                ? `Default persona for this server set to preset: **${presetPersona.name}** (ID: ${presetId}).`
+                : "Failed to save configuration.",
+            );
+            break;
+          }
+          case "view": {
+            // Format the current config for display
+            const allowed = serverConfig.allowedChannels
+              ? serverConfig.allowedChannels.map((id) => `<#${id}>`).join(", ")
+              : "All Channels";
+            // Display the default persona mapping
+            const defaultMapping = serverConfig.personaMappings["default"];
+            let personaInfo = "Not Set";
+            if (defaultMapping) {
+              personaInfo = `Type: ${defaultMapping.type}, ID: ${defaultMapping.id}`;
+              // Optionally load and display name/description if needed
+            }
+
+            const configView =
+              `**Current Server Configuration:**\n` +
+              `- Allowed Channels: ${allowed}\n` +
+              `- Responsiveness: ${serverConfig.responsiveness}\n` +
+              `- Default Persona Mapping: ${personaInfo}`;
+            // TODO: Add display for channel-specific mappings if implemented
+            await interaction.editReply(configView);
+            break;
+          }
+          default:
+            await interaction.editReply("Unknown configuration command.");
+        }
+      } catch (error: any) {
+        loggerService.logger.error(
+          `Error handling '/config ${subcommand}' interaction:`,
+          error,
+        );
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply(
+            "An error occurred while processing the command.",
+          );
+        } else {
+          await interaction.reply({
+            content: "An error occurred while processing the command.",
+            ephemeral: true,
+          });
+        }
+      }
+    }
+    // Handle other commands if added later
   }
 }
 

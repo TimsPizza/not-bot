@@ -44,10 +44,11 @@ class ResponderService {
   private static instance: ResponderService;
 
   private config: AppConfig | null = null;
-  private prompts: PersonaPrompts | null = null;
+  // Remove prompts property
 
   private constructor() {
-    this.loadConfigAndPrompts();
+    // Only load AppConfig
+    this.config = configService.getConfig();
     loggerService.logger.info("ResponderService initialized.");
   }
 
@@ -62,61 +63,46 @@ class ResponderService {
     return ResponderService.instance;
   }
 
-  private loadConfigAndPrompts(): void {
-    try {
-      this.config = configService.getConfig();
-      this.prompts = configService.getPersonaPrompts();
-      if (!this.config || !this.prompts) {
-        loggerService.logger.error(
-          "ResponderService: Config or Prompts not loaded.",
-        );
-      }
-    } catch (error) {
-      loggerService.logger.error(
-        "Failed to load config/prompts in ResponderService:",
-        error,
-      );
-    }
-  }
+  // Removed loadConfigAndPrompts
 
   /**
-   * @description Generates a response using the primary LLM based on channel context.
+   * @description Generates a response using the primary LLM based on channel context and persona.
    * @param channelId The ID of the channel to generate a response for.
+   * @param systemPromptTemplate The base template for the system prompt.
+   * @param personaDetails The specific details/instructions for the current persona.
    * @param targetMessage Optional: The specific message being responded to (if determined by evaluator).
    * @returns A promise resolving to the generated response string or null.
    */
   public async generateResponse(
     channelId: string,
+    systemPromptTemplate: string, // Added
+    personaDetails: string, // Added
     targetMessage?: SimpleMessage,
   ): Promise<string | null> {
     // Validate required configuration for primary LLM
     if (
       !this.config ||
-      !this.prompts ||
-      !this.prompts.systemPrompt ||
+      !systemPromptTemplate || // Check passed template
+      !personaDetails || // Check passed details
       !this.config.primaryLlmApiKey ||
       !this.config.primaryLlmBaseUrl ||
       !this.config.primaryLlmModel
     ) {
-      loggerService.logger.error(
-        "Primary LLM configuration is incomplete. Cannot generate response.",
-      );
-      return null;
+      const missingConfigs = [];
+      if (!this.config) missingConfigs.push('AppConfig');
+      if (!systemPromptTemplate) missingConfigs.push('systemPromptTemplate');
+      if (!personaDetails) missingConfigs.push('personaDetails');
+      if (!this.config?.primaryLlmApiKey) missingConfigs.push('primaryLlmApiKey');
+      if (!this.config?.primaryLlmBaseUrl) missingConfigs.push('primaryLlmBaseUrl');
+      if (!this.config?.primaryLlmModel) missingConfigs.push('primaryLlmModel');
+      if (missingConfigs.length > 0) {
+        loggerService.logger.error(
+        `Secondary LLM configuration is incomplete. Missing: ${missingConfigs.join(', ')}`,
+        );
+        return null;
+      }
     }
-    const missingConfigs = [];
-    if (!this.config) missingConfigs.push('config');
-    if (!this.prompts) missingConfigs.push('prompts');
-    if (!this.prompts?.evaluationPrompt) missingConfigs.push('evaluationPrompt');
-    if (!this.config?.primaryLlmApiKey) missingConfigs.push('secondaryLlmApiKey');
-    if (!this.config?.primaryLlmBaseUrl) missingConfigs.push('secondaryLlmBaseUrl');
-    if (!this.config?.primaryLlmModel) missingConfigs.push('secondaryLlmModel');
 
-    if (missingConfigs.length > 0) {
-      loggerService.logger.error(
-      `Secondary LLM configuration is incomplete. Missing: ${missingConfigs.join(', ')}`,
-      );
-      return null;
-    }
 
     // Get context for the channel
     const context = contextManagerService.getContext(channelId);
@@ -130,10 +116,20 @@ class ResponderService {
     }
 
     try {
-      // Convert context messages to chat format
+      // Inject persona details into the system prompt template
+      const finalSystemPrompt = systemPromptTemplate.replace(
+          /\{\{PERSONA_DETAILS\}\}/g,
+          personaDetails
+      );
+       if (!finalSystemPrompt.includes(personaDetails) && systemPromptTemplate.includes("{{PERSONA_DETAILS}}")) {
+          loggerService.logger.warn("Persona details placeholder '{{PERSONA_DETAILS}}' found in system prompt template, but replacement might have failed.");
+      }
+
+
+      // Convert context messages to chat format using the final prompt
       const chatMessages = formatMessagesForChat(
         contextMessages,
-        this.prompts.systemPrompt
+        finalSystemPrompt // Use the injected prompt
       );
 
       // Add specific instruction for target message if provided
@@ -145,9 +141,10 @@ class ResponderService {
       }
 
       // Call the API using the main client (for response generation)
+      // Use non-null assertion (!) as config is validated at the start of the method
       const responseText = await callChatCompletionApi(
         'main',
-        this.config.primaryLlmModel,
+        this.config!.primaryLlmModel,
         chatMessages,
         0.7, // temperature - higher for more creative responses
         150, // max_tokens - adjust based on expected response length
