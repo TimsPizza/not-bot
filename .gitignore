@@ -152,3 +152,6 @@ dist/
 
 # Ignore VS Code settings directory
 .vscode/
+
+server_data/
+
