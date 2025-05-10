@@ -1,0 +1,11 @@
+{
+  "serverId": "1362269225191866398",
+  "allowedChannels": null,
+  "responsiveness": 2,
+  "personaMappings": {
+    "default": {
+      "type": "preset",
+      "id": "dio"
+    }
+  }
+}

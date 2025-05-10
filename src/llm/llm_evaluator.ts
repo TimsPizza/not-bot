@@ -90,7 +90,7 @@ class LLMEvaluatorService {
     channelContextMessages: SimpleMessage[],
   ): Promise<LLMEvaluationResult | null> {
     // --- Calculate Effective Threshold ---
-    const BASE_RESPONSE_THRESHOLD = 0.5; // Base score needed to consider responding
+    const BASE_RESPONSE_THRESHOLD = 0.35; // Base score needed to consider responding
     // Adjust threshold based on responsiveness: Higher responsiveness = lower threshold
     const effectiveThreshold = Math.max(
       0.01,

@@ -148,7 +148,9 @@ class BotClient {
       loggerService.logger.warn(
         `Attempted to update context for DM channel ${simpleMessage.channelId}. Server-specific features might be limited.`,
       );
-      // contextManagerService.updateContext(simpleMessage.channelId, 'DM', [simpleMessage]); // Example if using a placeholder ID for DMs
+      contextManagerService.updateContext(simpleMessage.channelId, "DM", [
+        simpleMessage,
+      ]); // Example if using a placeholder ID for DMs
     }
 
     // 4. Add to Buffer
@@ -223,9 +225,9 @@ class BotClient {
         // --- Get server responsiveness ---
         let responsiveness = 0.6; // Default if not in a guild
         const firstMessage = messages[0]; // Get first message to find guildId
-        if (firstMessage?.guildId) {
+        if (firstMessage?.guildId || firstMessage?.channelId) {
           const serverConfig = configService.getServerConfig(
-            firstMessage.guildId,
+            firstMessage.guildId ?? firstMessage.channelId, // DMs don't have a guildId, so use the channelId
           );
           responsiveness = serverConfig.responsiveness;
         } else {
@@ -240,10 +242,14 @@ class BotClient {
         let evaluationPromptTemplate: string | undefined;
         const evaluation_firstMessage = messages[0]; // Safe to access here if messages is not empty
 
-        if (evaluation_firstMessage?.guildId) {
+        if (
+          evaluation_firstMessage?.guildId ||
+          evaluation_firstMessage?.channelId
+        ) {
           evaluation_personaDefinition =
             configService.getPersonaDefinitionForContext(
-              evaluation_firstMessage.guildId,
+              evaluation_firstMessage.guildId ??
+                evaluation_firstMessage.channelId, // DMs don't have a guildId, so use the channelId
               channelId,
             );
           const basePrompts = configService.getPersonaPrompts();
@@ -326,9 +332,9 @@ class BotClient {
       let personaDetails: string | undefined;
       const firstMessage = messages.length > 0 ? messages[0] : null; // Safely get first message
 
-      if (firstMessage?.guildId) {
+      if (firstMessage?.guildId || firstMessage?.channelId) {
         personaDefinition = configService.getPersonaDefinitionForContext(
-          firstMessage.guildId,
+          firstMessage.guildId ?? firstMessage.channelId, // DMs don't have a guildId, so use the channelId
           channelId,
         );
         const basePrompts = configService.getPersonaPrompts(); // Load base prompt templates
@@ -536,19 +542,21 @@ class BotClient {
     interaction: Interaction<CacheType>,
   ): Promise<void> {
     if (!interaction.isChatInputCommand()) return; // Only handle slash commands for now
-    if (!interaction.inGuild()) {
-      await interaction.reply({
-        content: "Configuration commands can only be used in a server.",
-        ephemeral: true,
-      });
-      return;
-    }
+    // TODO: Uncomment this when want to disable config commands in DMs
+    // if (!interaction.inGuild()) {
+    //   await interaction.reply({
+    //     content: "Configuration commands can only be used in a server.",
+    //     ephemeral: true,
+    //   });
+    //   return;
+    // }
 
-    const { commandName, options, guildId, channel } = interaction;
+    const { commandName, options, guildId, channel, channelId } = interaction;
+    const isDm = channel?.type === ChannelType.DM;
 
     if (commandName === "config") {
       // Ensure the user has admin permissions (double check, although command definition should handle it)
-      if (!interaction.memberPermissions?.has("Administrator")) {
+      if (!interaction.memberPermissions?.has("Administrator") && !isDm) {
         await interaction.reply({
           content: "You need administrator permissions to use this command.",
           ephemeral: true,
@@ -565,7 +573,9 @@ class BotClient {
         // Defer reply for potentially long operations
         await interaction.deferReply({ ephemeral: true }); // Ephemeral so only user sees config changes
 
-        const serverConfig = configService.getServerConfig(guildId); // Get current or default config
+        const serverConfig = configService.getServerConfig(
+          guildId ?? channelId, // DMs don't have a guildId, so use the channelId
+        ); // Get current or default config
 
         switch (subcommand) {
           case "allow_channel": {
