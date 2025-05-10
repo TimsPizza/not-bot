@@ -19,7 +19,7 @@ const commands = [
     .setName("config")
     .setDescription("Configure bot settings for this server (Admin only)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) // Only admins can use
-    .setDMPermission(false) // Not available in DMs
+    // .setDMPermission(false) // Not available in DMs
     .addSubcommand((subcommand) =>
       subcommand
         .setName("allow_channel")
