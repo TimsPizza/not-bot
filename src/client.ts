@@ -89,6 +89,9 @@ class BotClient {
   private async handleMessageCreate(message: Message): Promise<void> {
     // 1. Initial Filtering
     if (message.author.bot) return; // Ignore bots (including self)
+    loggerService.logger.info(
+      `Received message from ${message.author.username} in channel ${message.channelId} in guild ${message.guildId}: ${message.content}`,
+    );
     if (!message.content || message.content.trim().length === 0) return; // Ignore empty messages or messages with only attachments
     if (!this.botId) {
       // Ensure botId is set (should be after ClientReady)
