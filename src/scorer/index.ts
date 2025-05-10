@@ -141,7 +141,7 @@ class ScorerService {
               ? contextMessages
               : undefined;
             const result = ruleFn.call(this, message, contextArg); // Call rule function
-            
+
             loggerService.logger.debug(
               `Rule '${ruleName}' scored ${result.score ? rule.weight : 0} for message ${message.id}`,
             );

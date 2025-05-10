@@ -126,16 +126,16 @@ export interface PersonaPrompts {
  * @description Defines the type of persona reference.
  */
 export enum PersonaType {
-    Preset = "preset", // References a persona in the global preset directory
-    Custom = "custom"  // References a persona defined within the server's data directory
+  Preset = "preset", // References a persona in the global preset directory
+  Custom = "custom", // References a persona defined within the server's data directory
 }
 
 /**
  * @description Defines how a persona is referenced in the server config.
  */
 export interface PersonaRef {
-    type: PersonaType;
-    id: string; // ID of the preset or custom persona file (without .json extension)
+  type: PersonaType;
+  id: string; // ID of the preset or custom persona file (without .json extension)
 }
 
 /**
@@ -147,8 +147,8 @@ export interface ServerConfig {
   responsiveness: number; // Default: 1.0
   allowedChannels: string[] | null; // Default: null (all allowed)
   personaMappings: {
-      [channelIdOrDefault: string]: PersonaRef; // Key is channel ID or 'default' for server-wide setting
-                                                // Value references a preset or custom persona
+    [channelIdOrDefault: string]: PersonaRef; // Key is channel ID or 'default' for server-wide setting
+    // Value references a preset or custom persona
   };
   maxContextMessages?: number; // Optional override for global setting
   maxDailyResponses?: number; // Optional override for global setting (implementation TBD)
@@ -161,10 +161,10 @@ export interface ServerConfig {
  * Custom: Stored in <serverDataPath>/<serverId>/personas/<id>.json
  */
 export interface PersonaDefinition {
-    id: string; // Unique identifier (filename without extension)
-    name: string; // Display name
-    description: string; // Brief description
-    details: string; // The core persona definition text to be injected into prompt templates
+  id: string; // Unique identifier (filename without extension)
+  name: string; // Display name
+  description: string; // Brief description
+  details: string; // The core persona definition text to be injected into prompt templates
 }
 
 // Renamed PersonaPreset to PersonaDefinition for consistency

@@ -4,7 +4,16 @@ import path from "path";
 import yaml from "js-yaml";
 import dotenv from "dotenv";
 import loggerService from "@/logger"; // Import logger service instance
-import { AppConfig, ScoringRules, PersonaPrompts, ServerConfig, PersonaDefinition, PersonaPreset, PersonaRef, PersonaType } from "@/types"; // Updated imports
+import {
+  AppConfig,
+  ScoringRules,
+  PersonaPrompts,
+  ServerConfig,
+  PersonaDefinition,
+  PersonaPreset,
+  PersonaRef,
+  PersonaType,
+} from "@/types"; // Updated imports
 
 class ConfigService {
   private static instance: ConfigService;
@@ -25,9 +34,14 @@ class ConfigService {
     dotenv.config(); // Load .env file first
 
     // Load paths from environment variables first, providing defaults
-    this.mainConfigPath = process.env.CONFIG_FILE_PATH || path.resolve(process.cwd(), "config", "config.yaml");
-    this.serverDataPath = process.env.SERVER_DATA_PATH || path.resolve(process.cwd(), "data");
-    this.presetPersonasPath = process.env.PRESET_PERSONAS_PATH || path.resolve(process.cwd(), "personas");
+    this.mainConfigPath =
+      process.env.CONFIG_FILE_PATH ||
+      path.resolve(process.cwd(), "config", "config.yaml");
+    this.serverDataPath =
+      process.env.SERVER_DATA_PATH || path.resolve(process.cwd(), "data");
+    this.presetPersonasPath =
+      process.env.PRESET_PERSONAS_PATH ||
+      path.resolve(process.cwd(), "personas");
 
     this.initializeConfig(); // Load configuration during instantiation
   }
@@ -100,62 +114,96 @@ class ConfigService {
    * @param channelId The ID of the channel.
    * @returns {PersonaDefinition | undefined} The resolved persona definition, or undefined if not found/error.
    */
-  public getPersonaDefinitionForContext(serverId: string, channelId: string): PersonaDefinition | undefined {
+  public getPersonaDefinitionForContext(
+    serverId: string,
+    channelId: string,
+  ): PersonaDefinition | undefined {
     const serverConfig = this.getServerConfig(serverId);
 
     // Determine the relevant PersonaRef (channel specific or default)
-    const personaRef = serverConfig.personaMappings[channelId] ?? serverConfig.personaMappings['default'];
+    const personaRef =
+      serverConfig.personaMappings[channelId] ??
+      serverConfig.personaMappings["default"];
 
     if (!personaRef) {
-      loggerService.logger.error(`No persona mapping found for server ${serverId}, channel ${channelId}, or default.`);
+      loggerService.logger.error(
+        `No persona mapping found for server ${serverId}, channel ${channelId}, or default.`,
+      );
       // Fallback to trying the hardcoded 'default' preset if mapping is somehow missing
-      return this.getPresetPersona('default');
+      return this.getPresetPersona("default");
     }
 
-    loggerService.logger.debug(`Resolved PersonaRef for ${serverId}/${channelId}: type=${personaRef.type}, id=${personaRef.id}`);
+    loggerService.logger.debug(
+      `Resolved PersonaRef for ${serverId}/${channelId}: type=${personaRef.type}, id=${personaRef.id}`,
+    );
 
     // Load based on type
     if (personaRef.type === PersonaType.Preset) {
       const preset = this.getPresetPersona(personaRef.id);
       if (!preset) {
-        loggerService.logger.error(`Preset persona '${personaRef.id}' referenced by server ${serverId} not found. Falling back to default preset.`);
-        return this.getPresetPersona('default'); // Fallback
+        loggerService.logger.error(
+          `Preset persona '${personaRef.id}' referenced by server ${serverId} not found. Falling back to default preset.`,
+        );
+        return this.getPresetPersona("default"); // Fallback
       }
       return preset;
     } else if (personaRef.type === PersonaType.Custom) {
       // Load custom persona from server's data directory
-      const customPersonaPath = path.join(this.serverDataPath, serverId, 'personas', `${personaRef.id}.json`);
+      const customPersonaPath = path.join(
+        this.serverDataPath,
+        serverId,
+        "personas",
+        `${personaRef.id}.json`,
+      );
       try {
         if (fs.existsSync(customPersonaPath)) {
-          const fileContent = fs.readFileSync(customPersonaPath, 'utf-8');
+          const fileContent = fs.readFileSync(customPersonaPath, "utf-8");
           const customPersona = JSON.parse(fileContent) as PersonaDefinition;
           // Basic validation
-          if (customPersona.id && customPersona.name && customPersona.description && customPersona.details) {
-             // Ensure ID matches ref ID
-             if (customPersona.id !== personaRef.id) {
-                 loggerService.logger.warn(`Custom persona ID in file ${customPersonaPath} ('${customPersona.id}') differs from reference ID ('${personaRef.id}'). Using reference ID.`);
-                 customPersona.id = personaRef.id;
-             }
-             loggerService.logger.debug(`Loaded custom persona '${customPersona.id}' for server ${serverId}`);
-             return customPersona;
+          if (
+            customPersona.id &&
+            customPersona.name &&
+            customPersona.description &&
+            customPersona.details
+          ) {
+            // Ensure ID matches ref ID
+            if (customPersona.id !== personaRef.id) {
+              loggerService.logger.warn(
+                `Custom persona ID in file ${customPersonaPath} ('${customPersona.id}') differs from reference ID ('${personaRef.id}'). Using reference ID.`,
+              );
+              customPersona.id = personaRef.id;
+            }
+            loggerService.logger.debug(
+              `Loaded custom persona '${customPersona.id}' for server ${serverId}`,
+            );
+            return customPersona;
           } else {
-             loggerService.logger.error(`Invalid structure in custom persona file: ${customPersonaPath}`);
+            loggerService.logger.error(
+              `Invalid structure in custom persona file: ${customPersonaPath}`,
+            );
           }
         } else {
-          loggerService.logger.error(`Custom persona file not found: ${customPersonaPath}`);
+          loggerService.logger.error(
+            `Custom persona file not found: ${customPersonaPath}`,
+          );
         }
       } catch (error: any) {
-        loggerService.logger.error(`Error loading custom persona file ${customPersonaPath}: ${error.message}`);
+        loggerService.logger.error(
+          `Error loading custom persona file ${customPersonaPath}: ${error.message}`,
+        );
       }
       // Fallback if custom load fails
-      loggerService.logger.warn(`Failed to load custom persona '${personaRef.id}' for server ${serverId}. Falling back to default preset.`);
-      return this.getPresetPersona('default');
+      loggerService.logger.warn(
+        `Failed to load custom persona '${personaRef.id}' for server ${serverId}. Falling back to default preset.`,
+      );
+      return this.getPresetPersona("default");
     } else {
-      loggerService.logger.error(`Unknown persona type '${personaRef.type}' for persona ID '${personaRef.id}' in server ${serverId}. Falling back to default preset.`);
-      return this.getPresetPersona('default');
+      loggerService.logger.error(
+        `Unknown persona type '${personaRef.type}' for persona ID '${personaRef.id}' in server ${serverId}. Falling back to default preset.`,
+      );
+      return this.getPresetPersona("default");
     }
   }
-
 
   /**
    * @description Gets the configuration for a specific server, loading if necessary.
@@ -171,12 +219,12 @@ class ConfigService {
 
     // 2. Try loading from file using serverDataPath
     const serverSpecificDataPath = path.join(this.serverDataPath, serverId); // Correct variable name
-    const configFilePath = path.join(serverSpecificDataPath, 'config.json'); // Correct variable name
+    const configFilePath = path.join(serverSpecificDataPath, "config.json"); // Correct variable name
     let loadedConfig: ServerConfig | null = null;
 
     if (fs.existsSync(configFilePath)) {
       try {
-        const fileContent = fs.readFileSync(configFilePath, 'utf-8');
+        const fileContent = fs.readFileSync(configFilePath, "utf-8");
         const parsedConfig = JSON.parse(fileContent) as Partial<ServerConfig>;
         // Basic validation and merging with defaults
         loadedConfig = {
@@ -184,23 +232,37 @@ class ConfigService {
           ...parsedConfig, // Override with loaded values
           serverId: serverId, // Ensure serverId is correct
           // Ensure personaMappings exists and has a default if missing in loaded file
-          personaMappings: parsedConfig.personaMappings && Object.keys(parsedConfig.personaMappings).length > 0
+          personaMappings:
+            parsedConfig.personaMappings &&
+            Object.keys(parsedConfig.personaMappings).length > 0
               ? parsedConfig.personaMappings
               : this.getDefaultServerConfig(serverId).personaMappings,
         };
         // Add more specific validation if needed (e.g., responsiveness range)
-        if (typeof loadedConfig.responsiveness !== 'number' || loadedConfig.responsiveness < 0) {
-            loggerService.logger.warn(`Invalid responsiveness value for server ${serverId} in ${configFilePath}. Resetting to default.`);
-            loadedConfig.responsiveness = this.getDefaultServerConfig(serverId).responsiveness;
+        if (
+          typeof loadedConfig.responsiveness !== "number" ||
+          loadedConfig.responsiveness < 0
+        ) {
+          loggerService.logger.warn(
+            `Invalid responsiveness value for server ${serverId} in ${configFilePath}. Resetting to default.`,
+          );
+          loadedConfig.responsiveness =
+            this.getDefaultServerConfig(serverId).responsiveness;
         }
-        loggerService.logger.debug(`Loaded server config for ${serverId} from ${configFilePath}`);
+        loggerService.logger.debug(
+          `Loaded server config for ${serverId} from ${configFilePath}`,
+        );
       } catch (error: any) {
-        loggerService.logger.error(`Error loading or parsing server config file ${configFilePath}: ${error.message}. Using defaults.`);
+        loggerService.logger.error(
+          `Error loading or parsing server config file ${configFilePath}: ${error.message}. Using defaults.`,
+        );
         loadedConfig = this.getDefaultServerConfig(serverId);
       }
     } else {
       // File doesn't exist or failed to load/parse, use defaults
-      loggerService.logger.debug(`No valid config file found for server ${serverId} at ${configFilePath}. Using defaults.`);
+      loggerService.logger.debug(
+        `No valid config file found for server ${serverId} at ${configFilePath}. Using defaults.`,
+      );
       loadedConfig = this.getDefaultServerConfig(serverId);
     }
 
@@ -209,32 +271,41 @@ class ConfigService {
     return loadedConfig;
   }
 
-   /**
+  /**
    * @description Saves a server's configuration to its JSON file.
    * @param serverConfig The ServerConfig object to save.
    * @returns {Promise<boolean>} True if successful, false otherwise.
    */
-   public async saveServerConfig(serverConfig: ServerConfig): Promise<boolean> {
+  public async saveServerConfig(serverConfig: ServerConfig): Promise<boolean> {
     if (!this.serverDataPath) {
-        loggerService.logger.error("Cannot save server config: SERVER_DATA_PATH is not configured.");
-        return false;
+      loggerService.logger.error(
+        "Cannot save server config: SERVER_DATA_PATH is not configured.",
+      );
+      return false;
     }
-    const serverSpecificDataPath = path.join(this.serverDataPath, serverConfig.serverId); // Correct variable name
-    const configFilePath = path.join(serverSpecificDataPath, 'config.json'); // Correct variable name
+    const serverSpecificDataPath = path.join(
+      this.serverDataPath,
+      serverConfig.serverId,
+    ); // Correct variable name
+    const configFilePath = path.join(serverSpecificDataPath, "config.json"); // Correct variable name
     try {
       // Ensure the server-specific directory exists
       await fs.ensureDir(serverSpecificDataPath);
 
       const configJson = JSON.stringify(serverConfig, null, 2); // Pretty print JSON
-      await fs.writeFile(configFilePath, configJson, 'utf-8');
+      await fs.writeFile(configFilePath, configJson, "utf-8");
 
       // Update cache
       this.serverConfigs.set(serverConfig.serverId, serverConfig);
 
-      loggerService.logger.info(`Successfully saved server config for ${serverConfig.serverId} to ${configFilePath}`);
+      loggerService.logger.info(
+        `Successfully saved server config for ${serverConfig.serverId} to ${configFilePath}`,
+      );
       return true;
     } catch (error: any) {
-      loggerService.logger.error(`Error saving server config file ${configFilePath}: ${error.message}`);
+      loggerService.logger.error(
+        `Error saving server config file ${configFilePath}: ${error.message}`,
+      );
       return false;
     }
   }
@@ -248,96 +319,126 @@ class ConfigService {
    */
   private getDefaultServerConfig(serverId: string): ServerConfig {
     // Default config points to the 'default' preset persona
-    const defaultPersonaRef: PersonaRef = { type: PersonaType.Preset, id: 'default' };
+    const defaultPersonaRef: PersonaRef = {
+      type: PersonaType.Preset,
+      id: "default",
+    };
     return {
       serverId: serverId,
       allowedChannels: null,
       responsiveness: 1.0,
       personaMappings: {
-          'default': defaultPersonaRef // Default mapping for the server
+        default: defaultPersonaRef, // Default mapping for the server
       },
       // maxContextMessages: undefined,
       // maxDailyResponses: undefined,
     };
   }
 
- /**
+  /**
    * @description Loads all valid persona definition files from the preset personas directory.
    */
   private loadPresetPersonas(): void {
     if (!this.presetPersonasPath) {
-      loggerService.logger.warn(`PRESET_PERSONAS_PATH is not defined. Cannot load preset personas.`);
+      loggerService.logger.warn(
+        `PRESET_PERSONAS_PATH is not defined. Cannot load preset personas.`,
+      );
       this.presetPersonas.clear();
       return;
     }
-     if (!fs.existsSync(this.presetPersonasPath)) {
-      loggerService.logger.warn(`Preset personas directory not found: ${this.presetPersonasPath}. No preset personas loaded.`);
+    if (!fs.existsSync(this.presetPersonasPath)) {
+      loggerService.logger.warn(
+        `Preset personas directory not found: ${this.presetPersonasPath}. No preset personas loaded.`,
+      );
       this.presetPersonas.clear();
       return;
     }
 
-
-    loggerService.logger.info(`Loading preset personas from: ${this.presetPersonasPath}`);
+    loggerService.logger.info(
+      `Loading preset personas from: ${this.presetPersonasPath}`,
+    );
     const loadedPersonas = new Map<string, PersonaDefinition>();
     try {
       const files = fs.readdirSync(this.presetPersonasPath);
       for (const file of files) {
-        if (file.endsWith('.json')) { // Only load .json files
+        if (file.endsWith(".json")) {
+          // Only load .json files
           const filePath = path.join(this.presetPersonasPath, file);
-          const personaId = path.basename(file, '.json'); // Use filename as ID
+          const personaId = path.basename(file, ".json"); // Use filename as ID
           try {
-            const fileContent = fs.readFileSync(filePath, 'utf-8');
-            const personaData = JSON.parse(fileContent) as Partial<PersonaDefinition>;
+            const fileContent = fs.readFileSync(filePath, "utf-8");
+            const personaData = JSON.parse(
+              fileContent,
+            ) as Partial<PersonaDefinition>;
 
             // Basic validation
-            if (personaData.name && personaData.description && personaData.details) {
-               if (loadedPersonas.has(personaId)) {
-                   loggerService.logger.warn(`Duplicate preset persona ID '${personaId}' found in ${file}. Skipping.`);
-                   continue;
-               }
-               // Ensure the ID from the file matches the filename if present, otherwise use filename
-               const finalId = personaData.id && personaData.id !== personaId
-                   ? personaData.id // Prefer ID from file content if it exists and differs
-                   : personaId;
+            if (
+              personaData.name &&
+              personaData.description &&
+              personaData.details
+            ) {
+              if (loadedPersonas.has(personaId)) {
+                loggerService.logger.warn(
+                  `Duplicate preset persona ID '${personaId}' found in ${file}. Skipping.`,
+                );
+                continue;
+              }
+              // Ensure the ID from the file matches the filename if present, otherwise use filename
+              const finalId =
+                personaData.id && personaData.id !== personaId
+                  ? personaData.id // Prefer ID from file content if it exists and differs
+                  : personaId;
 
-               if (personaData.id && personaData.id !== personaId) {
-                    loggerService.logger.warn(`Persona ID in file ${file} ('${personaData.id}') differs from filename ('${personaId}'). Using ID from file content.`);
-               }
+              if (personaData.id && personaData.id !== personaId) {
+                loggerService.logger.warn(
+                  `Persona ID in file ${file} ('${personaData.id}') differs from filename ('${personaId}'). Using ID from file content.`,
+                );
+              }
 
-
-               loadedPersonas.set(finalId, {
-                   id: finalId,
-                   name: personaData.name,
-                   description: personaData.description,
-                   details: personaData.details
-               });
-               loggerService.logger.debug(`Loaded preset persona: ${finalId} from ${file}`);
+              loadedPersonas.set(finalId, {
+                id: finalId,
+                name: personaData.name,
+                description: personaData.description,
+                details: personaData.details,
+              });
+              loggerService.logger.debug(
+                `Loaded preset persona: ${finalId} from ${file}`,
+              );
             } else {
-               loggerService.logger.warn(`Invalid persona structure in file ${file}. Skipping.`);
+              loggerService.logger.warn(
+                `Invalid persona structure in file ${file}. Skipping.`,
+              );
             }
           } catch (error: any) {
-            loggerService.logger.error(`Error loading or parsing preset persona file ${filePath}: ${error.message}`);
+            loggerService.logger.error(
+              `Error loading or parsing preset persona file ${filePath}: ${error.message}`,
+            );
           }
         }
       }
     } catch (error: any) {
-      loggerService.logger.error(`Error reading preset personas directory ${this.presetPersonasPath}: ${error.message}`);
+      loggerService.logger.error(
+        `Error reading preset personas directory ${this.presetPersonasPath}: ${error.message}`,
+      );
     }
 
     if (loadedPersonas.size === 0) {
-        loggerService.logger.warn("No valid preset personas were loaded.");
+      loggerService.logger.warn("No valid preset personas were loaded.");
     } else {
-        loggerService.logger.info(`Successfully loaded ${loadedPersonas.size} preset personas.`);
+      loggerService.logger.info(
+        `Successfully loaded ${loadedPersonas.size} preset personas.`,
+      );
     }
     this.presetPersonas = loadedPersonas;
 
     // Ensure a 'default' persona exists, otherwise log a critical warning
-    if (!this.presetPersonas.has('default')) {
-        loggerService.logger.error("CRITICAL: Default preset persona ('default.json') not found or failed to load. Bot may not function correctly.");
-        // Optionally, create a minimal fallback default persona here?
+    if (!this.presetPersonas.has("default")) {
+      loggerService.logger.error(
+        "CRITICAL: Default preset persona ('default.json') not found or failed to load. Bot may not function correctly.",
+      );
+      // Optionally, create a minimal fallback default persona here?
     }
   }
-
 
   private initializeConfig(): void {
     loggerService.logger.info("Initializing configuration...");
@@ -355,24 +456,33 @@ class ConfigService {
 
     // Ensure server data and preset persona directories exist
     try {
-        if (this.serverDataPath) {
-             fs.ensureDirSync(this.serverDataPath);
-             loggerService.logger.info(`Server data directory ensured: ${this.serverDataPath}`);
-        } else {
-             loggerService.logger.error("SERVER_DATA_PATH is not defined. Server-specific configurations cannot be loaded or saved.");
-             // Potentially throw an error or exit if this path is critical
-        }
-        if (this.presetPersonasPath) {
-             fs.ensureDirSync(this.presetPersonasPath);
-             loggerService.logger.info(`Preset personas directory ensured: ${this.presetPersonasPath}`);
-        } else {
-             loggerService.logger.warn("PRESET_PERSONAS_PATH is not defined. Preset personas cannot be loaded.");
-        }
+      if (this.serverDataPath) {
+        fs.ensureDirSync(this.serverDataPath);
+        loggerService.logger.info(
+          `Server data directory ensured: ${this.serverDataPath}`,
+        );
+      } else {
+        loggerService.logger.error(
+          "SERVER_DATA_PATH is not defined. Server-specific configurations cannot be loaded or saved.",
+        );
+        // Potentially throw an error or exit if this path is critical
+      }
+      if (this.presetPersonasPath) {
+        fs.ensureDirSync(this.presetPersonasPath);
+        loggerService.logger.info(
+          `Preset personas directory ensured: ${this.presetPersonasPath}`,
+        );
+      } else {
+        loggerService.logger.warn(
+          "PRESET_PERSONAS_PATH is not defined. Preset personas cannot be loaded.",
+        );
+      }
     } catch (error: any) {
-        loggerService.logger.error(`Failed to ensure data/persona directories exist: ${error.message}`);
-        // Decide if this is critical enough to exit? For now, just log.
+      loggerService.logger.error(
+        `Failed to ensure data/persona directories exist: ${error.message}`,
+      );
+      // Decide if this is critical enough to exit? For now, just log.
     }
-
 
     if (this.currentConfig.scoringRulesFile) {
       this.currentScoringRules = this.loadScoringRules(
@@ -442,57 +552,109 @@ class ConfigService {
       // --- Construct final config, prioritizing environment variables ---
       const finalConfig: Partial<AppConfig> = {
         // Discord Token
-        discordToken: process.env.DISCORD_BOT_TOKEN || configFromFile.discordToken,
+        discordToken:
+          process.env.DISCORD_BOT_TOKEN || configFromFile.discordToken,
 
         // Primary LLM
-        primaryLlmApiKey: process.env.OPENAI_PRIMARY_API_KEY || configFromFile.primaryLlmApiKey,
-        primaryLlmBaseUrl: process.env.OPENAI_PRIMARY_BASE_URL || configFromFile.primaryLlmBaseUrl || 'https://api.openai.com/v1', // Default OpenAI URL
-        primaryLlmModel: process.env.OPENAI_PRIMARY_MODEL || configFromFile.primaryLlmModel,
+        primaryLlmApiKey:
+          process.env.OPENAI_PRIMARY_API_KEY || configFromFile.primaryLlmApiKey,
+        primaryLlmBaseUrl:
+          process.env.OPENAI_PRIMARY_BASE_URL ||
+          configFromFile.primaryLlmBaseUrl ||
+          "https://api.openai.com/v1", // Default OpenAI URL
+        primaryLlmModel:
+          process.env.OPENAI_PRIMARY_MODEL || configFromFile.primaryLlmModel,
 
         // Secondary LLM
-        secondaryLlmApiKey: process.env.OPENAI_SECONDARY_API_KEY || configFromFile.secondaryLlmApiKey,
-        secondaryLlmBaseUrl: process.env.OPENAI_SECONDARY_BASE_URL || configFromFile.secondaryLlmBaseUrl || 'https://api.openai.com/v1', // Default OpenAI URL
-        secondaryLlmModel: process.env.OPENAI_SECONDARY_MODEL || configFromFile.secondaryLlmModel,
+        secondaryLlmApiKey:
+          process.env.OPENAI_SECONDARY_API_KEY ||
+          configFromFile.secondaryLlmApiKey,
+        secondaryLlmBaseUrl:
+          process.env.OPENAI_SECONDARY_BASE_URL ||
+          configFromFile.secondaryLlmBaseUrl ||
+          "https://api.openai.com/v1", // Default OpenAI URL
+        secondaryLlmModel:
+          process.env.OPENAI_SECONDARY_MODEL ||
+          configFromFile.secondaryLlmModel,
 
         // Bot Behavior (use defaults if not in env or file)
-        bufferSize: parseInt(process.env.BUFFER_SIZE || '', 10) || configFromFile.bufferSize || 10,
-        bufferTimeWindowMs: parseInt(process.env.BUFFER_TIME_WINDOW_MS || '', 10) || configFromFile.bufferTimeWindowMs || 2000,
-        scoreThresholdRespond: parseInt(process.env.SCORE_THRESHOLD_RESPOND || '', 10) || configFromFile.scoreThresholdRespond || 80,
-        scoreThresholdDiscard: parseInt(process.env.SCORE_THRESHOLD_DISCARD || '', 10) || configFromFile.scoreThresholdDiscard || -10,
-        contextMaxMessages: parseInt(process.env.CONTEXT_MAX_MESSAGES || '', 10) || configFromFile.contextMaxMessages || 20,
-        contextMaxAgeSeconds: parseInt(process.env.CONTEXT_MAX_AGE_SECONDS || '', 10) || configFromFile.contextMaxAgeSeconds || 3600,
-        logLevel: (process.env.LOG_LEVEL as AppConfig['logLevel']) || configFromFile.logLevel || 'info',
+        bufferSize:
+          parseInt(process.env.BUFFER_SIZE || "", 10) ||
+          configFromFile.bufferSize ||
+          10,
+        bufferTimeWindowMs:
+          parseInt(process.env.BUFFER_TIME_WINDOW_MS || "", 10) ||
+          configFromFile.bufferTimeWindowMs ||
+          2000,
+        scoreThresholdRespond:
+          parseInt(process.env.SCORE_THRESHOLD_RESPOND || "", 10) ||
+          configFromFile.scoreThresholdRespond ||
+          80,
+        scoreThresholdDiscard:
+          parseInt(process.env.SCORE_THRESHOLD_DISCARD || "", 10) ||
+          configFromFile.scoreThresholdDiscard ||
+          -10,
+        contextMaxMessages:
+          parseInt(process.env.CONTEXT_MAX_MESSAGES || "", 10) ||
+          configFromFile.contextMaxMessages ||
+          20,
+        contextMaxAgeSeconds:
+          parseInt(process.env.CONTEXT_MAX_AGE_SECONDS || "", 10) ||
+          configFromFile.contextMaxAgeSeconds ||
+          3600,
+        logLevel:
+          (process.env.LOG_LEVEL as AppConfig["logLevel"]) ||
+          configFromFile.logLevel ||
+          "info",
 
         // File Paths from config file (or env vars)
-        personaPromptFile: process.env.PERSONA_PROMPT_FILE_PATH || configFromFile.personaPromptFile,
-        scoringRulesFile: process.env.SCORING_RULES_FILE_PATH || configFromFile.scoringRulesFile,
+        personaPromptFile:
+          process.env.PERSONA_PROMPT_FILE_PATH ||
+          configFromFile.personaPromptFile,
+        scoringRulesFile:
+          process.env.SCORING_RULES_FILE_PATH ||
+          configFromFile.scoringRulesFile,
         // serverDataPath is loaded directly from env var in constructor
         serverDataPath: this.serverDataPath, // Include the path loaded from env/default
       };
 
-
       // --- Validation ---
       // Validate fields loaded from config.yaml / corresponding env vars
-      const requiredFieldsFromConfig: (keyof Omit<AppConfig, 'serverDataPath'>)[] = [
-        'discordToken',
-        'primaryLlmApiKey', 'primaryLlmBaseUrl', 'primaryLlmModel',
-        'secondaryLlmApiKey', 'secondaryLlmBaseUrl', 'secondaryLlmModel',
-        'personaPromptFile', 'scoringRulesFile'
+      const requiredFieldsFromConfig: (keyof Omit<
+        AppConfig,
+        "serverDataPath"
+      >)[] = [
+        "discordToken",
+        "primaryLlmApiKey",
+        "primaryLlmBaseUrl",
+        "primaryLlmModel",
+        "secondaryLlmApiKey",
+        "secondaryLlmBaseUrl",
+        "secondaryLlmModel",
+        "personaPromptFile",
+        "scoringRulesFile",
         // serverDataPath is validated separately as it comes directly from env
       ];
-       // Validate serverDataPath separately (must come from env or default)
-       if (!finalConfig.serverDataPath) {
-           throw new Error(`Missing required environment variable or default path: SERVER_DATA_PATH`);
-       }
-
-
-      const missingFields = requiredFieldsFromConfig.filter(field => !finalConfig[field]);
-
-      if (missingFields.length > 0) {
-        throw new Error(`Missing required configuration fields: ${missingFields.join(', ')}. Check environment variables or ${filePath}`);
+      // Validate serverDataPath separately (must come from env or default)
+      if (!finalConfig.serverDataPath) {
+        throw new Error(
+          `Missing required environment variable or default path: SERVER_DATA_PATH`,
+        );
       }
 
-      loggerService.logger.info("Main config loaded and validated successfully.");
+      const missingFields = requiredFieldsFromConfig.filter(
+        (field) => !finalConfig[field],
+      );
+
+      if (missingFields.length > 0) {
+        throw new Error(
+          `Missing required configuration fields: ${missingFields.join(", ")}. Check environment variables or ${filePath}`,
+        );
+      }
+
+      loggerService.logger.info(
+        "Main config loaded and validated successfully.",
+      );
       // Cast to AppConfig after validation ensures all required fields are present
       return finalConfig as AppConfig;
     } catch (error: any) {
@@ -556,7 +718,8 @@ class ConfigService {
         return;
       }
       loggerService.logger.info(`Watching file for changes: ${filePath}`);
-      const watcher = fs.watch(filePath, (eventType: fs.WatchEventType) => { // Explicitly type eventType
+      const watcher = fs.watch(filePath, (eventType: fs.WatchEventType) => {
+        // Explicitly type eventType
         if (eventType === "change") {
           loggerService.logger.info(
             `Detected change in ${filePath}. Reloading...`,

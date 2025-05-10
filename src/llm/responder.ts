@@ -17,7 +17,7 @@ function formatMessagesForChat(
 ): ChatCompletionMessageParam[] {
   const result: ChatCompletionMessageParam[] = [
     // Start with the system prompt that defines the bot's personality
-    { role: "system", content: systemPrompt }
+    { role: "system", content: systemPrompt },
   ];
 
   // Add each message as either a user or assistant message
@@ -26,13 +26,13 @@ function formatMessagesForChat(
       // Bot's own messages become assistant messages
       result.push({
         role: "assistant",
-        content: msg.content
+        content: msg.content,
       });
     } else {
       // Other users' messages become user messages with their names
       result.push({
         role: "user",
-        content: `${msg.authorUsername}：${msg.content}`
+        content: `${msg.authorUsername}：${msg.content}`,
       });
     }
   });
@@ -89,20 +89,21 @@ class ResponderService {
       !this.config.primaryLlmModel
     ) {
       const missingConfigs = [];
-      if (!this.config) missingConfigs.push('AppConfig');
-      if (!systemPromptTemplate) missingConfigs.push('systemPromptTemplate');
-      if (!personaDetails) missingConfigs.push('personaDetails');
-      if (!this.config?.primaryLlmApiKey) missingConfigs.push('primaryLlmApiKey');
-      if (!this.config?.primaryLlmBaseUrl) missingConfigs.push('primaryLlmBaseUrl');
-      if (!this.config?.primaryLlmModel) missingConfigs.push('primaryLlmModel');
+      if (!this.config) missingConfigs.push("AppConfig");
+      if (!systemPromptTemplate) missingConfigs.push("systemPromptTemplate");
+      if (!personaDetails) missingConfigs.push("personaDetails");
+      if (!this.config?.primaryLlmApiKey)
+        missingConfigs.push("primaryLlmApiKey");
+      if (!this.config?.primaryLlmBaseUrl)
+        missingConfigs.push("primaryLlmBaseUrl");
+      if (!this.config?.primaryLlmModel) missingConfigs.push("primaryLlmModel");
       if (missingConfigs.length > 0) {
         loggerService.logger.error(
-        `Secondary LLM configuration is incomplete. Missing: ${missingConfigs.join(', ')}`,
+          `Secondary LLM configuration is incomplete. Missing: ${missingConfigs.join(", ")}`,
         );
         return null;
       }
     }
-
 
     // Get context for the channel
     const context = contextManagerService.getContext(channelId);
@@ -118,32 +119,36 @@ class ResponderService {
     try {
       // Inject persona details into the system prompt template
       const finalSystemPrompt = systemPromptTemplate.replace(
-          /\{\{PERSONA_DETAILS\}\}/g,
-          personaDetails
+        /\{\{PERSONA_DETAILS\}\}/g,
+        personaDetails,
       );
-       if (!finalSystemPrompt.includes(personaDetails) && systemPromptTemplate.includes("{{PERSONA_DETAILS}}")) {
-          loggerService.logger.warn("Persona details placeholder '{{PERSONA_DETAILS}}' found in system prompt template, but replacement might have failed.");
+      if (
+        !finalSystemPrompt.includes(personaDetails) &&
+        systemPromptTemplate.includes("{{PERSONA_DETAILS}}")
+      ) {
+        loggerService.logger.warn(
+          "Persona details placeholder '{{PERSONA_DETAILS}}' found in system prompt template, but replacement might have failed.",
+        );
       }
-
 
       // Convert context messages to chat format using the final prompt
       const chatMessages = formatMessagesForChat(
         contextMessages,
-        finalSystemPrompt // Use the injected prompt
+        finalSystemPrompt, // Use the injected prompt
       );
 
       // Add specific instruction for target message if provided
       if (targetMessage) {
         chatMessages.push({
           role: "system",
-          content: `请特别注意回应用户 ${targetMessage.authorUsername} 的消息：${targetMessage.content}`
+          content: `请特别注意回应用户 ${targetMessage.authorUsername} 的消息：${targetMessage.content}`,
         });
       }
 
       // Call the API using the main client (for response generation)
       // Use non-null assertion (!) as config is validated at the start of the method
       const responseText = await callChatCompletionApi(
-        'main',
+        "main",
         this.config!.primaryLlmModel,
         chatMessages,
         0.7, // temperature - higher for more creative responses
@@ -164,19 +169,13 @@ class ResponderService {
           return null;
         }
 
-        loggerService.logger.info(
-          `Generated response: "${cleanedText}"`,
-        );
+        loggerService.logger.info(`Generated response: "${cleanedText}"`);
         return cleanedText;
       }
 
       return null;
-
     } catch (error) {
-      loggerService.logger.error(
-        "Error generating response:",
-        error,
-      );
+      loggerService.logger.error("Error generating response:", error);
       return null;
     }
   }
