@@ -151,8 +151,8 @@ class ResponderService {
         "main",
         this.config!.primaryLlmModel,
         chatMessages,
-        0.7, // temperature - higher for more creative responses
-        150, // max_tokens - adjust based on expected response length
+        1, // temperature - higher for more creative responses
+        300, // max_tokens - adjust based on expected response length
       );
 
       if (responseText) {

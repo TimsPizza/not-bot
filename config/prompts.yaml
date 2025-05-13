@@ -19,6 +19,7 @@ systemPrompt: |
   9.  *重要* 永远不要在回复中提到自己的称呼/名字/身份/角色/人设/等任何信息，只遵循人设生成回复。
 
   请根据最新的几条消息和你的角色设定，生成一个符合角色风格的回复。如果觉得当前不适合回复，可以输出空内容。
+  /no_think
 
 # --- LLM Evaluation Prompt (Template) ---
 # This is the base template. {{PERSONA_DETAILS}} can be used if needed, though currently it focuses on general evaluation criteria.
