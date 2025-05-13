@@ -17,8 +17,9 @@ dotenv.config();
 const commands = [
   new SlashCommandBuilder()
     .setName("config")
-    .setDescription("Configure bot settings for this server (Admin only)")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) // Only admins can use
+    .setDescription("Configure bot settings for this server")
+    // .setDescription("Configure bot settings for this server (Admin only)")
+    // .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) // Only admins can use
     .setDMPermission(true) // Not available in DMs
     .addSubcommand((subcommand) =>
       subcommand

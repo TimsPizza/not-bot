@@ -559,13 +559,14 @@ class BotClient {
 
     if (commandName === "config") {
       // Ensure the user has admin permissions (double check, although command definition should handle it)
-      if (!interaction.memberPermissions?.has("Administrator") && !isDm) {
-        await interaction.reply({
-          content: "You need administrator permissions to use this command.",
-          ephemeral: true,
-        });
-        return;
-      }
+      // Disable admin check for now
+      // if (!interaction.memberPermissions?.has("Administrator") && !isDm) {
+      //   await interaction.reply({
+      //     content: "You need administrator permissions to use this command.",
+      //     ephemeral: true,
+      //   });
+      //   return;
+      // }
 
       const subcommand = options.getSubcommand(true);
       loggerService.logger.info(
