@@ -276,9 +276,17 @@ export interface SummaryResult {
   summary: string;
   messageCount: number;
   direction: string;
-  timeRange: {
-    start: Date;
-    end: Date;
+  messageRange: {
+    startMessage: {
+      id: string;
+      url: string;
+      timestamp: Date;
+    };
+    endMessage: {
+      id: string;
+      url: string;
+      timestamp: Date;
+    };
   };
   requestId: string;
 }

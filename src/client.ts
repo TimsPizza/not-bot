@@ -1,35 +1,30 @@
 // src/client.ts
+import bufferQueueService from "@/buffer";
+import configService from "@/config"; // Import class type
+import contextManagerService from "@/context";
+import llmEvaluatorService from "@/llm/llm_evaluator";
+import responderService from "@/llm/responder";
+import loggerService from "@/logger";
+import scorerService from "@/scorer"; // Ensure this uses getDecisionForBatch
 import {
+  PersonaDefinition,
+  PersonaType,
+  ScoreDecision,
+  SimpleMessage,
+} from "@/types";
+import {
+  CacheType, // Added
+  Channel,
+  ChannelType,
   Client,
   DMChannel,
   Events,
   GatewayIntentBits,
+  Interaction,
   Message,
   Partials,
   TextChannel,
-  Interaction, // Added
-  CacheType, // Added
-  Channel,
-  ChannelType, // Added
 } from "discord.js";
-import loggerService from "@/logger";
-import configService, { ConfigService } from "@/config"; // Import class type
-import contextManagerService from "@/context";
-import bufferQueueService from "@/buffer";
-import scorerService from "@/scorer"; // Ensure this uses getDecisionForBatch
-import llmEvaluatorService from "@/llm/llm_evaluator";
-import responderService from "@/llm/responder";
-import {
-  SimpleMessage,
-  ScoreDecision,
-  PersonaType,
-  PersonaDefinition,
-} from "@/types";
-import { 
-  messageSummaryCommand,
-  handleSummaryConfigSelect,
-  handleCustomCountModal 
-} from './commands/context/summarize';
 
 class BotClient {
   private client: Client;
@@ -553,8 +548,10 @@ class BotClient {
   ): Promise<void> {
     // 处理消息上下文菜单命令
     if (interaction.isMessageContextMenuCommand()) {
-      if (interaction.commandName === '📊 Summarize Messages') {
-        const { messageSummaryCommand } = await import('./commands/context/summarize.js');
+      if (interaction.commandName === "📊 Summarize Messages") {
+        const { messageSummaryCommand } = await import(
+          "./commands/context/summarize.js"
+        );
         await messageSummaryCommand.execute(interaction);
       }
       return;
@@ -562,8 +559,10 @@ class BotClient {
 
     // 处理总结功能相关的选择菜单交互
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId.startsWith('summary_')) {
-        const { handleSummaryConfigSelect } = await import('./commands/context/summarize.js');
+      if (interaction.customId.startsWith("summary_")) {
+        const { handleSummaryConfigSelect } = await import(
+          "./commands/context/summarize.js"
+        );
         await handleSummaryConfigSelect(interaction);
       }
       return;
@@ -571,8 +570,10 @@ class BotClient {
 
     // 处理总结功能相关的Modal提交
     if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('summary_custom_count_')) {
-        const { handleCustomCountModal } = await import('./commands/context/summarize.js');
+      if (interaction.customId.startsWith("summary_custom_count_")) {
+        const { handleCustomCountModal } = await import(
+          "./commands/context/summarize.js"
+        );
         await handleCustomCountModal(interaction);
       }
       return;
@@ -580,8 +581,13 @@ class BotClient {
 
     // 处理总结功能相关的按钮交互
     if (interaction.isButton()) {
-      if (interaction.customId.startsWith('summary_confirm_') || interaction.customId.startsWith('summary_cancel_')) {
-        const { handleSummaryButtonClick } = await import('./commands/context/summarize.js');
+      if (
+        interaction.customId.startsWith("summary_confirm_") ||
+        interaction.customId.startsWith("summary_cancel_")
+      ) {
+        const { handleSummaryButtonClick } = await import(
+          "./commands/context/summarize.js"
+        );
         await handleSummaryButtonClick(interaction);
       }
       return;
@@ -629,17 +635,20 @@ class BotClient {
           case "channel": {
             const action = options.getString("action", true);
             const targetChannel = options.getChannel("channel") as Channel;
-            
+
             // 如果没有指定频道，使用当前频道
             const channelToConfig = targetChannel || interaction.channel;
-            
-            if (!channelToConfig || channelToConfig.type !== ChannelType.GuildText) {
+
+            if (
+              !channelToConfig ||
+              channelToConfig.type !== ChannelType.GuildText
+            ) {
               await interaction.editReply(
                 "Invalid channel. Please select a text channel or use this command in a text channel.",
               );
               return;
             }
-            
+
             const channelId = channelToConfig.id;
             let allowed = serverConfig.allowedChannels || [];
             let message: string;
@@ -696,7 +705,7 @@ class BotClient {
           case "persona": {
             const action = options.getString("action", true);
             const targetChannel = options.getChannel("channel") as Channel;
-            
+
             switch (action) {
               case "set": {
                 const presetId = options.getString("persona", true);
@@ -726,25 +735,32 @@ class BotClient {
                   personaMessage = `Default persona for this server set to: **${presetPersona.name}** (ID: ${presetId}).`;
                 }
 
-                const success = await configService.saveServerConfig(serverConfig);
+                const success =
+                  await configService.saveServerConfig(serverConfig);
                 await interaction.editReply(
                   success ? personaMessage : "Failed to save configuration.",
                 );
                 break;
               }
               case "list": {
-                const availablePersonas = configService.getAvailablePresetPersonas();
-                const personaList = Array.from(availablePersonas.values()).map((persona: PersonaDefinition) => 
-                  `• **${persona.name}** (ID: \`${persona.id}\`) - ${persona.description}`
-                ).join('\n');
-                
+                const availablePersonas =
+                  configService.getAvailablePresetPersonas();
+                const personaList = Array.from(availablePersonas.values())
+                  .map(
+                    (persona: PersonaDefinition) =>
+                      `• **${persona.name}** (ID: \`${persona.id}\`) - ${persona.description}`,
+                  )
+                  .join("\n");
+
                 await interaction.editReply(
-                  `**Available Personas:**\n${personaList}`
+                  `**Available Personas:**\n${personaList}`,
                 );
                 break;
               }
               default:
-                await interaction.editReply("Invalid persona action specified.");
+                await interaction.editReply(
+                  "Invalid persona action specified.",
+                );
                 return;
             }
             break;

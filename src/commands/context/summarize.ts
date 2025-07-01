@@ -275,15 +275,22 @@ export async function handleSummaryConfigSelect(
       return;
     }
 
-    const validMessageId = messageId as string;
+    // 此时messageId和subAction已确保存在，使用类型断言
+    const messageIdStr = messageId!;
+    const subActionStr = subAction!;
     const value = interaction.values[0];
 
-    if (subAction === 'count' && value === 'custom') {
+    if (!value) {
+      loggerService.logger.warn('No value selected in interaction');
+      return;
+    }
+
+    if (subActionStr === 'count' && value === 'custom') {
       // 显示自定义数量输入Modal
-      await showCustomCountModal(interaction, validMessageId);
+      await showCustomCountModal(interaction, messageIdStr);
     } else {
       // 只更新状态，不执行总结
-      await updateSummaryConfigSelection(interaction, subAction, value, validMessageId);
+      await updateSummaryConfigSelection(interaction, subActionStr, value, messageIdStr);
     }
 
   } catch (error) {
@@ -437,7 +444,7 @@ export async function handleCustomCountModal(
     }
 
     // 更新配置状态
-    await updateSummaryConfigSelection(interaction, 'count', count.toString(), messageId);
+    await updateSummaryConfigSelection(interaction, 'count', count.toString(), messageId!);
 
   } catch (error) {
     loggerService.logger.error('Error handling custom count modal:', error);
@@ -518,7 +525,12 @@ async function executeSummaryWithLoading(
         { name: '👤 Requested by', value: `${interaction.user}`, inline: true },
         { name: '📊 Message Count', value: `${result.messageCount} messages`, inline: true },
         { name: '📈 Direction', value: result.direction, inline: true },
-        { name: '⏰ Time Range', value: `<t:${Math.floor(result.timeRange.start.getTime() / 1000)}:f> to <t:${Math.floor(result.timeRange.end.getTime() / 1000)}:f>`, inline: false }
+        { 
+          name: '📌 Message Range', 
+          value: `[Start Message](${result.messageRange.startMessage.url}) → [End Message](${result.messageRange.endMessage.url})\n` +
+                 `<t:${Math.floor(result.messageRange.startMessage.timestamp.getTime() / 1000)}:f> to <t:${Math.floor(result.messageRange.endMessage.timestamp.getTime() / 1000)}:f>`,
+          inline: false 
+        }
       )
       .setColor(0x2ecc71)
       .setTimestamp()
@@ -604,91 +616,83 @@ async function updateConfigInterfaceWithButtons(
       'All options selected! Click "Generate Summary" to proceed.' : 
       'Please complete all configuration options above.' });
 
-  // 重建组件，只显示未选择的选择菜单
+  // 获取全局配置用于重建组件
+  const configService = ConfigService.getInstance();
+  const globalConfig = configService.getConfig();
+  const effectiveConfig = globalConfig.summary;
+
+  // 重建组件，始终显示所有选择菜单，允许用户修改
   const components = [];
-  
-  if (!allSelected) {
-    // 获取全局配置用于重建组件
-    const configService = ConfigService.getInstance();
-    const globalConfig = configService.getConfig();
-    const effectiveConfig = globalConfig.summary;
 
-    // 消息数量选择器（如果未选择）
-    if (!config.count) {
-      const presetOptions = (effectiveConfig?.presetCounts || [5, 10, 15, 20]).map((count: number) => ({
-        label: `${count} messages`,
-        value: `preset_${count}`,
-        description: `Summarize ${count} messages`,
-        emoji: '📊'
-      }));
+  // 消息数量选择器（始终显示）
+  const presetOptions = (effectiveConfig?.presetCounts || [5, 10, 15, 20]).map((count: number) => ({
+    label: `${count} messages${config.count === count ? ' ✅' : ''}`,
+    value: `preset_${count}`,
+    description: `Summarize ${count} messages`,
+    emoji: '📊'
+  }));
 
-      presetOptions.push({
-        label: '🔧 Custom Count',
-        value: 'custom',
-        description: `Custom message count (${effectiveConfig?.minMessages || 3}-${effectiveConfig?.maxMessages || 50} messages)`,
-        emoji: '⚙️'
-      });
+  presetOptions.push({
+    label: `🔧 Custom Count${config.count && !effectiveConfig?.presetCounts?.includes(config.count) ? ' ✅' : ''}`,
+    value: 'custom',
+    description: `Custom message count (${effectiveConfig?.minMessages || 3}-${effectiveConfig?.maxMessages || 50} messages)`,
+    emoji: '⚙️'
+  });
 
-      const countSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`summary_count_${messageId}`)
-        .setPlaceholder('Select number of messages to summarize...')
-        .addOptions(presetOptions);
+  const countSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`summary_count_${messageId}`)
+    .setPlaceholder(config.count ? `Current: ${config.count} messages` : 'Select number of messages to summarize...')
+    .addOptions(presetOptions);
 
-      components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(countSelectMenu));
-    }
+  components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(countSelectMenu));
 
-    // 方向选择器（如果未选择）
-    if (!config.direction) {
-      const directionSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`summary_direction_${messageId}`)
-        .setPlaceholder('Select summary direction...')
-        .addOptions([
-          {
-            label: '📈 Forward',
-            value: 'forward',
-            description: 'Summarize messages after this message',
-            emoji: '📈'
-          },
-          {
-            label: '📉 Backward', 
-            value: 'backward',
-            description: 'Summarize messages before this message',
-            emoji: '📉'
-          },
-          {
-            label: '🎯 Around',
-            value: 'around',
-            description: 'Summarize messages around this message',
-            emoji: '🎯'
-          }
-        ]);
+  // 方向选择器（始终显示）
+  const directionSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`summary_direction_${messageId}`)
+    .setPlaceholder(config.direction ? `Current: ${getDirectionName(config.direction)}` : 'Select summary direction...')
+    .addOptions([
+      {
+        label: `📈 Later${config.direction === 'forward' ? ' ✅' : ''}`,
+        value: 'forward',
+        description: 'Summarize messages after this message',
+        emoji: '📈'
+      },
+      {
+        label: `📉 Earlier${config.direction === 'backward' ? ' ✅' : ''}`, 
+        value: 'backward',
+        description: 'Summarize messages before this message',
+        emoji: '📉'
+      },
+      {
+        label: `🎯 Around${config.direction === 'around' ? ' ✅' : ''}`,
+        value: 'around',
+        description: 'Summarize messages around this message',
+        emoji: '🎯'
+      }
+    ]);
 
-      components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(directionSelectMenu));
-    }
+  components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(directionSelectMenu));
 
-    // 发送模式选择器（如果未选择）
-    if (!config.sendMode) {
-      const sendModeSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`summary_mode_${messageId}`)
-        .setPlaceholder('Select visibility mode...')
-        .addOptions([
-          {
-            label: '🌍 Public',
-            value: 'public',
-            description: 'Send summary to channel (visible to everyone)',
-            emoji: '🌍'
-          },
-          {
-            label: '🔒 Private',
-            value: 'private', 
-            description: 'Send summary privately (only you can see)',
-            emoji: '🔒'
-          }
-        ]);
+  // 发送模式选择器（始终显示）
+  const sendModeSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`summary_mode_${messageId}`)
+    .setPlaceholder(config.sendMode ? `Current: ${getSendModeName(config.sendMode)}` : 'Select visibility mode...')
+    .addOptions([
+      {
+        label: `🌍 Public${config.sendMode === 'public' ? ' ✅' : ''}`,
+        value: 'public',
+        description: 'Send summary to channel (visible to everyone)',
+        emoji: '🌍'
+      },
+      {
+        label: `🔒 Private${config.sendMode === 'private' ? ' ✅' : ''}`,
+        value: 'private', 
+        description: 'Send summary privately (only you can see)',
+        emoji: '🔒'
+      }
+    ]);
 
-      components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sendModeSelectMenu));
-    }
-  }
+  components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sendModeSelectMenu));
 
   // 总是添加按钮行
   components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(confirmButton, cancelButton));
@@ -719,225 +723,13 @@ async function updateConfigInterfaceWithButtons(
 }
 
 /**
- * 更新配置界面显示（旧版本，保留兼容性）
- */
-async function updateConfigInterface(
-  interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
-  config: Partial<SummaryConfig>,
-  messageId: string
-): Promise<void> {
-  const checkMark = '✅';
-  const pendingMark = '⏳';
-
-  const statusText = [
-    `${config.count ? checkMark : pendingMark} 消息数量: ${config.count ? `${config.count}条` : '未设置'}`,
-    `${config.direction ? checkMark : pendingMark} 总结方向: ${config.direction ? getDirectionName(config.direction) : '未设置'}`,
-    `${config.sendMode ? checkMark : pendingMark} 发送模式: ${config.sendMode ? getSendModeName(config.sendMode) : '未设置'}`
-  ].join('\n');
-
-  const embed = new EmbedBuilder()
-    .setTitle('📊 消息总结配置')
-    .setDescription('当前配置状态：\n\n' + statusText)
-    .setColor(config.count && config.direction && config.sendMode ? 0x2ecc71 : 0xf39c12)
-    .setFooter({ text: config.count && config.direction && config.sendMode ? 
-      '配置完成！正在生成总结...' : '请继续完成配置选项' });
-
-  // 重建选择菜单组件，标记已选择的选项
-  const components = [];
-  
-  if (!(config.count && config.direction && config.sendMode)) {
-    // 获取全局配置用于重建组件
-    const configService = ConfigService.getInstance();
-    const globalConfig = configService.getConfig();
-    const effectiveConfig = globalConfig.summary;
-
-    // 消息数量选择器（如果未选择）
-    if (!config.count) {
-      const presetOptions = (effectiveConfig?.presetCounts || [5, 10, 15, 20]).map((count: number) => ({
-        label: `${count} 条消息`,
-        value: `preset_${count}`,
-        description: `总结 ${count} 条消息`,
-        emoji: '📊'
-      }));
-
-      presetOptions.push({
-        label: '🔧 自定义数量',
-        value: 'custom',
-        description: `自定义消息数量 (${effectiveConfig?.minMessages || 3}-${effectiveConfig?.maxMessages || 50}条)`,
-        emoji: '⚙️'
-      });
-
-      const countSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`summary_count_${messageId}`)
-        .setPlaceholder('选择要总结的消息数量...')
-        .addOptions(presetOptions);
-
-      components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(countSelectMenu));
-    }
-
-    // 方向选择器（如果未选择）
-    if (!config.direction) {
-      const directionSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`summary_direction_${messageId}`)
-        .setPlaceholder('选择总结方向...')
-        .addOptions([
-          {
-            label: '📈 向前总结',
-            value: 'forward',
-            description: '总结从此消息开始之后的对话',
-            emoji: '📈'
-          },
-          {
-            label: '📉 向后总结', 
-            value: 'backward',
-            description: '总结导致此消息产生的之前讨论',
-            emoji: '📉'
-          },
-          {
-            label: '🎯 围绕总结',
-            value: 'around',
-            description: '总结围绕此消息前后的讨论',
-            emoji: '🎯'
-          }
-        ]);
-
-      components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(directionSelectMenu));
-    }
-
-    // 发送模式选择器（如果未选择）
-    if (!config.sendMode) {
-      const sendModeSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`summary_mode_${messageId}`)
-        .setPlaceholder('选择发送模式...')
-        .addOptions([
-          {
-            label: '🌍 公开到频道',
-            value: 'public',
-            description: '总结结果将发送到频道，所有人可见',
-            emoji: '🌍'
-          },
-          {
-            label: '🔒 仅自己可见',
-            value: 'private', 
-            description: '总结结果只有您能看到',
-            emoji: '🔒'
-          }
-        ]);
-
-      components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sendModeSelectMenu));
-    }
-  }
-
-  const updateData = {
-    embeds: [embed],
-    components: components
-  };
-
-  // 根据交互类型选择合适的更新方法
-  if (interaction instanceof StringSelectMenuInteraction) {
-    if (interaction.replied || interaction.deferred) {
-      await interaction.editReply(updateData);
-    } else {
-      await interaction.update(updateData);
-    }
-  } else {
-    // ModalSubmitInteraction
-    if (interaction.replied || interaction.deferred) {
-      await interaction.editReply(updateData);
-    } else {
-      await interaction.reply({
-        ...updateData,
-        ephemeral: true
-      });
-    }
-  }
-}
-
-/**
- * 执行总结
- */
-async function executeSummary(
-  interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
-  config: SummaryConfig
-): Promise<void> {
-  try {
-    // 延迟回复，因为总结可能需要一些时间
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferUpdate();
-    }
-
-    const channel = interaction.channel as TextChannel;
-    const summarizer = MessageSummarizer.getInstance();
-
-    // 执行总结
-    const result = await summarizer.summarizeMessages(
-      channel,
-      config.messageId,
-      config,
-      interaction.user
-    );
-
-    // 创建总结结果嵌入
-    const resultEmbed = new EmbedBuilder()
-      .setTitle('📊 聊天记录总结')
-      .setDescription(result.summary)
-      .addFields(
-        { name: '👤 发起者', value: `${interaction.user}`, inline: true },
-        { name: '📊 消息数量', value: `${result.messageCount}条`, inline: true },
-        { name: '📈 总结方向', value: result.direction, inline: true },
-        { name: '⏰ 时间范围', value: `<t:${Math.floor(result.timeRange.start.getTime() / 1000)}:f> 至 <t:${Math.floor(result.timeRange.end.getTime() / 1000)}:f>`, inline: false }
-      )
-      .setColor(0x2ecc71)
-      .setTimestamp()
-      .setFooter({ text: `总结ID: ${result.requestId}` });
-
-    // 根据发送模式发送结果
-    if (config.sendMode === 'public') {
-      // 公开发送到频道
-      await channel.send({ embeds: [resultEmbed] });
-      
-      // 更新交互回复
-      await interaction.editReply({
-        content: '✅ 总结已成功发送到频道！',
-        embeds: [],
-        components: []
-      });
-    } else {
-      // 私人发送，只有发起者可见
-      await interaction.editReply({
-        content: '✅ 总结生成完成！',
-        embeds: [resultEmbed],
-        components: []
-      });
-    }
-
-  } catch (error) {
-    loggerService.logger.error('Error executing summary:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      config: config,
-      userId: interaction.user.id,
-      channelId: interaction.channelId
-    });
-    
-    const errorMessage = error instanceof Error ? error.message : '生成总结时发生未知错误';
-    
-    await interaction.editReply({
-      content: `❌ ${errorMessage}`,
-      embeds: [],
-      components: []
-    });
-  }
-}
-
-/**
  * 获取方向显示名称
  */
 function getDirectionName(direction: string): string {
   const names = {
-    forward: '📈 向前总结',
-    backward: '📉 向后总结', 
-    around: '🎯 围绕总结'
+    forward: '📈 Later',
+    backward: '📉 Earlier', 
+    around: '🎯 Around'
   };
   return names[direction as keyof typeof names] || direction;
 }
@@ -947,8 +739,8 @@ function getDirectionName(direction: string): string {
  */
 function getSendModeName(sendMode: string): string {
   const names = {
-    public: '🌍 公开到频道',
-    private: '🔒 仅自己可见'
+    public: '🌍 Public',
+    private: '🔒 Private'
   };
   return names[sendMode as keyof typeof names] || sendMode;
 } 

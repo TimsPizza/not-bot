@@ -83,13 +83,30 @@ export class MessageSummarizer {
       );
 
       // 创建结果
+      const sortedMessages = messageBatch.messages.sort((a, b) => a.timestamp - b.timestamp);
+      
+      if (sortedMessages.length === 0) {
+        throw new Error('No valid messages found');
+      }
+      
+      const startMessage = sortedMessages[0]!; // 类型断言：已检查数组长度
+      const endMessage = sortedMessages[sortedMessages.length - 1]!; // 类型断言：已检查数组长度
+      
       const result: SummaryResult = {
         summary,
         messageCount: messageBatch.messages.length,
         direction: this.getDirectionDisplayName(config.direction),
-        timeRange: {
-          start: new Date(Math.min(...messageBatch.messages.map(m => m.timestamp))),
-          end: new Date(Math.max(...messageBatch.messages.map(m => m.timestamp)))
+        messageRange: {
+          startMessage: {
+            id: startMessage.id,
+            url: this.buildMessageUrl(startMessage),
+            timestamp: new Date(startMessage.timestamp)
+          },
+          endMessage: {
+            id: endMessage.id,
+            url: this.buildMessageUrl(endMessage),
+            timestamp: new Date(endMessage.timestamp)
+          }
         },
         requestId
       };
@@ -137,20 +154,20 @@ export class MessageSummarizer {
         member.roles.cache.has(roleId)
       );
       if (!hasPermission) {
-        throw new Error('您没有使用总结功能的权限');
+        throw new Error('You do not have permission to use the summary feature');
       }
     }
 
     // 检查冷却时间
     const cooldownRemaining = this.getCooldownRemaining(user.id);
     if (cooldownRemaining > 0) {
-      throw new Error(`请等待 ${cooldownRemaining} 秒后再次使用总结功能`);
+      throw new Error(`Please wait ${cooldownRemaining} seconds before using the summary feature again`);
     }
 
     // 检查并发限制
     const maxConcurrent = globalConfig.summary?.maxConcurrentSummaries || 5;
     if (this.activeSummaries.size >= maxConcurrent) {
-      throw new Error('系统繁忙，请稍后再试');
+      throw new Error('System is busy, please try again later');
     }
 
     // 验证消息数量
@@ -159,7 +176,7 @@ export class MessageSummarizer {
                        globalConfig.summary?.maxMessages || 50;
     
     if (config.count < minMessages || config.count > maxMessages) {
-      throw new Error(`消息数量必须在 ${minMessages}-${maxMessages} 之间`);
+      throw new Error(`The message count must be between ${minMessages}-${maxMessages}`);
     }
   }
 
@@ -171,7 +188,7 @@ export class MessageSummarizer {
       return await channel.messages.fetch(messageId);
     } catch (error) {
       loggerService.logger.error(`Failed to fetch target message ${messageId}:`, error);
-      throw new Error('无法找到指定的消息，可能已被删除');
+      throw new Error('The specified message was not found, possibly deleted');
     }
   }
 
@@ -196,7 +213,7 @@ export class MessageSummarizer {
         messages = await this.fetchAroundMessages(channel, targetMessage, config.count);
         break;
       default:
-        throw new Error('无效的总结方向');
+        throw new Error('Invalid summary direction');
     }
 
     // 过滤和排序消息
@@ -333,11 +350,11 @@ export class MessageSummarizer {
       let content = `[${timestamp}] ${message.authorUsername}: ${message.content}`;
       
       if (message.hasAttachments) {
-        content += ' [包含附件]';
+        content += ' [Contains attachments]';
       }
       
       if (message.hasEmbeds) {
-        content += ' [包含嵌入内容]';
+        content += ' [Contains embedded content]';
       }
       
       return content;
@@ -381,13 +398,13 @@ export class MessageSummarizer {
       );
       
       if (!response) {
-        throw new Error('LLM返回空响应');
+        throw new Error('LLM returned empty response');
       }
       
       return response.trim();
     } catch (error) {
       loggerService.logger.error('Failed to generate summary:', error);
-      throw new Error('生成总结时发生错误，请稍后重试');
+      throw new Error('Error generating summary, please try again later');
     }
   }
 
@@ -449,9 +466,9 @@ ${formattedMessages}
    */
   private getDirectionDescription(direction: string): string {
     const descriptions = {
-      forward: '总结从指定消息开始之后的对话发展',
-      backward: '总结导致指定消息产生的之前讨论内容',
-      around: '总结围绕指定消息前后的完整讨论过程'
+      forward: 'Summarize the conversation that followed the specified message',
+      backward: 'Summarize the conversation that preceded the specified message',
+      around: 'Summarize the complete discussion process around the specified message'
     };
     return descriptions[direction as keyof typeof descriptions] || direction;
   }
@@ -479,9 +496,9 @@ ${formattedMessages}
    */
   private getDirectionDisplayName(direction: string): string {
     const names = {
-      forward: '📈 向前总结',
-      backward: '📉 向后总结',
-      around: '🎯 围绕总结'
+      forward: '📈 Later',
+      backward: '📉 Earlier',
+      around: '🎯 Around'
     };
     return names[direction as keyof typeof names] || direction;
   }
@@ -518,6 +535,15 @@ ${formattedMessages}
     }
     
     return Math.ceil(remaining / 1000);
+  }
+
+  /**
+   * 构建Discord消息链接
+   */
+  private buildMessageUrl(message: SimpleMessage): string {
+    // Discord消息链接格式: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
+    const guildId = message.guildId || '@me'; // DM频道使用 @me
+    return `https://discord.com/channels/${guildId}/${message.channelId}/${message.id}`;
   }
 
   /**
