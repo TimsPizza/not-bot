@@ -25,6 +25,10 @@ export interface SimpleMessage {
     guildId: string | null;
   };
   respondedTo?: boolean; // Optional flag to mark if the bot has responded to this message
+  hasBeenRepliedTo: boolean; // To track if the bot has already replied to this message
+  // 新增：支持总结功能的字段
+  hasAttachments?: boolean;
+  hasEmbeds?: boolean;
 }
 
 /**
@@ -109,6 +113,45 @@ export interface AppConfig {
   // Paths below are now expected to be provided via environment variables
   serverDataPath: string; // Base path for all server-specific data (e.g., data/)
   // presetPersonasPath: string; // Path to the directory containing preset persona JSON files (e.g., personas/)
+  
+  // 新增：语言配置
+  language?: {
+    defaultPrimary: SupportedLanguage;
+    defaultFallback: SupportedLanguage;
+    autoDetectEnabled: boolean;
+    supportedLanguages: Array<{
+      code: string;
+      name: string;
+      flag: string;
+    }>;
+  };
+  
+  // 新增：总结功能配置
+  summary?: {
+    enabled: boolean;
+    minMessages: number;
+    maxMessages: number;
+    defaultCount: number;
+    presetCounts: number[];
+    cooldownSeconds: number;
+    maxConcurrentSummaries: number;
+    timeoutSeconds: number;
+    defaultServerSettings: {
+      enabled: boolean;
+      maxMessagesPerSummary: number;
+      cooldownSeconds: number;
+      allowedRoles: string[];
+      bannedChannels: string[];
+    };
+  };
+  
+  // 新增：频道管理配置
+  channelManagement?: {
+    defaultMode: 'whitelist' | 'blacklist';
+    autoManageNewChannels: boolean;
+    maxChannelsPerPage: number;
+    sortBy: 'position' | 'name' | 'type';
+  };
 }
 
 /**
@@ -153,6 +196,25 @@ export interface ServerConfig {
   maxContextMessages?: number; // Optional override for global setting
   maxDailyResponses?: number; // Optional override for global setting (implementation TBD)
   // Add other server-specific settings here
+  
+  // 新增：语言配置
+  languageConfig?: LanguageConfig;
+  
+  // 新增：总结功能配置
+  summarySettings?: {
+    enabled: boolean;
+    maxMessagesPerSummary: number;
+    cooldownSeconds: number;
+    allowedRoles?: string[];  // 可以使用总结功能的角色ID
+    bannedChannels?: string[]; // 禁止总结的频道ID
+  };
+  
+  // 增强：频道管理（支持多选）
+  channelConfig?: {
+    allowedChannels: string[];  // 允许的频道ID列表
+    mode: 'whitelist' | 'blacklist';  // 白名单或黑名单模式
+    autoManage: boolean;  // 是否自动管理新频道
+  };
 }
 
 /**
@@ -169,3 +231,93 @@ export interface PersonaDefinition {
 
 // Renamed PersonaPreset to PersonaDefinition for consistency
 export type PersonaPreset = PersonaDefinition;
+
+// 新增：语言配置系统
+export enum SupportedLanguage {
+  Auto = "auto",        // 自动检测
+  Chinese = "zh",       // 中文
+  English = "en",       // 英文
+  Japanese = "ja",      // 日文
+  Korean = "ko",        // 韩文
+  Spanish = "es",       // 西班牙文
+  French = "fr",        // 法文
+  German = "de",        // 德文
+  Russian = "ru",       // 俄文
+  Portuguese = "pt",    // 葡萄牙文
+}
+
+export interface LanguageConfig {
+  primary: SupportedLanguage;
+  fallback: SupportedLanguage;
+  autoDetect: boolean;  // 是否启用自动检测
+}
+
+// 总结功能相关类型
+export interface SummaryConfig {
+  messageId: string;
+  count: number;        // 3-50
+  direction: 'forward' | 'backward' | 'around';
+  sendMode: 'public' | 'private';
+  channelId: string;
+}
+
+export interface SummaryRequest {
+  targetMessage: SimpleMessage;
+  config: SummaryConfig;
+  requestUser: {
+    id: string;
+    username: string;
+    displayName: string;
+  };
+  timestamp: Date;
+}
+
+export interface SummaryResult {
+  summary: string;
+  messageCount: number;
+  direction: string;
+  timeRange: {
+    start: Date;
+    end: Date;
+  };
+  requestId: string;
+}
+
+// 新增：频道选择相关类型
+export interface ChannelSelectOption {
+  channelId: string;
+  channelName: string;
+  channelType: string;
+  enabled: boolean;
+  position: number;
+}
+
+export interface ChannelManagementState {
+  serverId: string;
+  channels: ChannelSelectOption[];
+  mode: 'whitelist' | 'blacklist';
+  pendingChanges: boolean;
+}
+
+// 新增：交互组件相关类型
+export interface InteractionContext {
+  type: 'slash_command' | 'context_menu' | 'modal_submit' | 'button_click' | 'select_menu';
+  userId: string;
+  channelId: string;
+  guildId?: string;
+  timestamp: Date;
+}
+
+export interface ModalConfig {
+  customId: string;
+  title: string;
+  components: any[];  // Discord.js Modal组件
+}
+
+// 新增：总结相关的消息处理类型
+export interface MessageBatch {
+  messages: SimpleMessage[];
+  direction: 'forward' | 'backward' | 'around';
+  anchorMessage: SimpleMessage;
+  totalCount: number;
+}

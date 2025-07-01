@@ -25,6 +25,11 @@ import {
   PersonaType,
   PersonaDefinition,
 } from "@/types";
+import { 
+  messageSummaryCommand,
+  handleSummaryConfigSelect,
+  handleCustomCountModal 
+} from './commands/context/summarize';
 
 class BotClient {
   private client: Client;
@@ -136,6 +141,7 @@ class BotClient {
           }
         : undefined,
       respondedTo: false, // Initialize as false (optional, default is undefined)
+      hasBeenRepliedTo: false, // 新增：用于总结功能
     };
 
     // 3. Update Context (do this regardless of buffering/scoring)
@@ -464,6 +470,7 @@ class BotClient {
             mentionsEveryone: false,
             isBot: true,
             respondedTo: true, // Mark bot's own message as 'responded' (it's the response itself)
+            hasBeenRepliedTo: false, // 新增：用于总结功能
           };
           // Pass serverId (guildId) if available when adding bot's own message
           if (botSimpleMessage.guildId) {
@@ -538,13 +545,50 @@ class BotClient {
   }
 
   /**
-   * @description Handles incoming interactions (like slash commands).
+   * @description Handles incoming interactions (slash commands, context menus, select menus, modals).
    * @param interaction The interaction object.
    */
   private async handleInteractionCreate(
     interaction: Interaction<CacheType>,
   ): Promise<void> {
-    if (!interaction.isChatInputCommand()) return; // Only handle slash commands for now
+    // 处理消息上下文菜单命令
+    if (interaction.isMessageContextMenuCommand()) {
+      if (interaction.commandName === '📊 Summarize Messages') {
+        const { messageSummaryCommand } = await import('./commands/context/summarize.js');
+        await messageSummaryCommand.execute(interaction);
+      }
+      return;
+    }
+
+    // 处理总结功能相关的选择菜单交互
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId.startsWith('summary_')) {
+        const { handleSummaryConfigSelect } = await import('./commands/context/summarize.js');
+        await handleSummaryConfigSelect(interaction);
+      }
+      return;
+    }
+
+    // 处理总结功能相关的Modal提交
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith('summary_custom_count_')) {
+        const { handleCustomCountModal } = await import('./commands/context/summarize.js');
+        await handleCustomCountModal(interaction);
+      }
+      return;
+    }
+
+    // 处理总结功能相关的按钮交互
+    if (interaction.isButton()) {
+      if (interaction.customId.startsWith('summary_confirm_') || interaction.customId.startsWith('summary_cancel_')) {
+        const { handleSummaryButtonClick } = await import('./commands/context/summarize.js');
+        await handleSummaryButtonClick(interaction);
+      }
+      return;
+    }
+
+    // 只处理斜杠命令
+    if (!interaction.isChatInputCommand()) return;
     // TODO: Uncomment this when want to disable config commands in DMs
     // if (!interaction.inGuild()) {
     //   await interaction.reply({
@@ -582,47 +626,63 @@ class BotClient {
         ); // Get current or default config
 
         switch (subcommand) {
-          case "allow_channel": {
-            const targetChannel = options.getChannel(
-              "channel",
-              true,
-            ) as Channel; // Type assertion needed
-            if (
-              !targetChannel ||
-              targetChannel.type !== ChannelType.GuildText
-            ) {
+          case "channel": {
+            const action = options.getString("action", true);
+            const targetChannel = options.getChannel("channel") as Channel;
+            
+            // 如果没有指定频道，使用当前频道
+            const channelToConfig = targetChannel || interaction.channel;
+            
+            if (!channelToConfig || channelToConfig.type !== ChannelType.GuildText) {
               await interaction.editReply(
-                "Invalid channel provided. Please select a text channel.",
+                "Invalid channel. Please select a text channel or use this command in a text channel.",
               );
               return;
             }
-            const channelId = targetChannel.id;
-
-            let allowed = serverConfig.allowedChannels || []; // Initialize if null
+            
+            const channelId = channelToConfig.id;
+            let allowed = serverConfig.allowedChannels || [];
             let message: string;
 
-            if (allowed.includes(channelId)) {
-              // Remove channel
-              allowed = allowed.filter((id) => id !== channelId);
-              message = `Bot is now **disallowed** in channel <#${channelId}>.`;
-            } else {
-              // Add channel
-              allowed.push(channelId);
-              message = `Bot is now **allowed** in channel <#${channelId}>.`;
+            switch (action) {
+              case "enable":
+                if (!allowed.includes(channelId)) {
+                  allowed.push(channelId);
+                  message = `Bot is now **enabled** in channel <#${channelId}>.`;
+                } else {
+                  message = `Bot is already enabled in channel <#${channelId}>.`;
+                }
+                break;
+              case "disable":
+                if (allowed.includes(channelId)) {
+                  allowed = allowed.filter((id) => id !== channelId);
+                  message = `Bot is now **disabled** in channel <#${channelId}>.`;
+                } else {
+                  message = `Bot is already disabled in channel <#${channelId}>.`;
+                }
+                break;
+              case "toggle":
+                if (allowed.includes(channelId)) {
+                  allowed = allowed.filter((id) => id !== channelId);
+                  message = `Bot is now **disabled** in channel <#${channelId}>.`;
+                } else {
+                  allowed.push(channelId);
+                  message = `Bot is now **enabled** in channel <#${channelId}>.`;
+                }
+                break;
+              default:
+                await interaction.editReply("Invalid action specified.");
+                return;
             }
-            // If array becomes empty, set back to null to signify "all allowed" again? Or keep empty array for "none allowed"?
-            // Let's keep empty array for "none allowed" for clarity. If they want all, they need to remove all restrictions.
-            // If they want to allow all again, maybe a separate command `/config allow_all_channels`? For now, manage list.
 
-            serverConfig.allowedChannels = allowed.length > 0 ? allowed : null; // Set back to null if empty? Let's stick with null = all
-
+            serverConfig.allowedChannels = allowed.length > 0 ? allowed : null;
             const success = await configService.saveServerConfig(serverConfig);
             await interaction.editReply(
               success ? message : "Failed to save configuration.",
             );
             break;
           }
-          case "set_responsiveness": {
+          case "responsiveness": {
             const value = options.getNumber("value", true);
             serverConfig.responsiveness = value;
             const success = await configService.saveServerConfig(serverConfig);
@@ -633,32 +693,60 @@ class BotClient {
             );
             break;
           }
-          case "set_persona": {
-            const presetId = options.getString("persona", true);
-            const presetPersona = configService.getPresetPersona(presetId);
+          case "persona": {
+            const action = options.getString("action", true);
+            const targetChannel = options.getChannel("channel") as Channel;
+            
+            switch (action) {
+              case "set": {
+                const presetId = options.getString("persona", true);
+                const presetPersona = configService.getPresetPersona(presetId);
 
-            if (!presetPersona) {
-              await interaction.editReply(
-                `Error: Preset persona with ID '${presetId}' not found.`,
-              );
-              return;
+                if (!presetPersona) {
+                  await interaction.editReply(
+                    `Error: Preset persona with ID '${presetId}' not found.`,
+                  );
+                  return;
+                }
+
+                let personaMessage: string;
+                if (targetChannel) {
+                  // 设置频道特定的角色
+                  serverConfig.personaMappings[targetChannel.id] = {
+                    type: PersonaType.Preset,
+                    id: presetId,
+                  };
+                  personaMessage = `Persona for channel <#${targetChannel.id}> set to: **${presetPersona.name}** (ID: ${presetId}).`;
+                } else {
+                  // 设置服务器默认角色
+                  serverConfig.personaMappings["default"] = {
+                    type: PersonaType.Preset,
+                    id: presetId,
+                  };
+                  personaMessage = `Default persona for this server set to: **${presetPersona.name}** (ID: ${presetId}).`;
+                }
+
+                const success = await configService.saveServerConfig(serverConfig);
+                await interaction.editReply(
+                  success ? personaMessage : "Failed to save configuration.",
+                );
+                break;
+              }
+              case "list": {
+                const availablePersonas = configService.getAvailablePresetPersonas();
+                const personaList = Array.from(availablePersonas.values()).map((persona: PersonaDefinition) => 
+                  `• **${persona.name}** (ID: \`${persona.id}\`) - ${persona.description}`
+                ).join('\n');
+                
+                await interaction.editReply(
+                  `**Available Personas:**\n${personaList}`
+                );
+                break;
+              }
+              default:
+                await interaction.editReply("Invalid persona action specified.");
+                return;
             }
-
-            // Set the default mapping to reference this preset
-            serverConfig.personaMappings["default"] = {
-              type: PersonaType.Preset,
-              id: presetId,
-            };
-
-            // TODO: Implement logic for setting channel-specific personas
-            // TODO: Implement logic for creating/setting custom personas
-
-            const success = await configService.saveServerConfig(serverConfig);
-            await interaction.editReply(
-              success
-                ? `Default persona for this server set to preset: **${presetPersona.name}** (ID: ${presetId}).`
-                : "Failed to save configuration.",
-            );
             break;
           }
           case "view": {
@@ -703,6 +791,7 @@ class BotClient {
         }
       }
     }
+
     // Handle other commands if added later
   }
 }

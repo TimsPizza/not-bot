@@ -616,6 +616,11 @@ class ConfigService {
           configFromFile.scoringRulesFile,
         // serverDataPath is loaded directly from env var in constructor
         serverDataPath: this.serverDataPath, // Include the path loaded from env/default
+        
+        // 新增字段：直接从YAML配置文件复制
+        language: configFromFile.language,
+        summary: configFromFile.summary,
+        channelManagement: configFromFile.channelManagement,
       };
 
       // --- Validation ---

@@ -23,3 +23,79 @@ logLevel: "info" # Options: trace, debug, info, warn, error
 personaPromptFile: "" # ABSOLUTE path to prompts.yaml
 scoringRulesFile: "" # ABSOLUTE path to scoring_rules.json
 contextStoragePath: "" # ABSOLUTE path to directory for context files
+
+# 新增：语言配置系统
+language:
+  # 全局默认语言设置
+  defaultPrimary: "auto"    # 默认主语言（auto=自动检测）
+  defaultFallback: "en"     # 默认后备语言
+  autoDetectEnabled: true   # 是否启用自动语言检测
+  
+  # 支持的语言列表（用于UI显示）
+  supportedLanguages:
+    - code: "auto"
+      name: "🤖 自动检测"
+      flag: "🌍"
+    - code: "zh"
+      name: "中文"
+      flag: "🇨🇳"
+    - code: "en" 
+      name: "English"
+      flag: "🇺🇸"
+    - code: "ja"
+      name: "日本語"
+      flag: "🇯🇵"
+    - code: "ko"
+      name: "한국어"
+      flag: "🇰🇷"
+    - code: "es"
+      name: "Español"
+      flag: "🇪🇸"
+    - code: "fr"
+      name: "Français"
+      flag: "🇫🇷"
+    - code: "de"
+      name: "Deutsch"
+      flag: "🇩🇪"
+    - code: "ru"
+      name: "Русский"
+      flag: "🇷🇺"
+    - code: "pt"
+      name: "Português"
+      flag: "🇵🇹"
+
+# 新增：总结功能配置
+summary:
+  # 全局总结功能设置
+  enabled: true
+  
+  # 消息数量限制
+  minMessages: 3
+  maxMessages: 50
+  defaultCount: 10
+  
+  # 预设选项
+  presetCounts: [5, 10, 15, 20]
+  
+  # 性能和安全限制
+  cooldownSeconds: 30        # 用户使用间隔
+  maxConcurrentSummaries: 5  # 同时进行的总结数量
+  timeoutSeconds: 120        # 总结超时时间
+  
+  # 默认服务器设置
+  defaultServerSettings:
+    enabled: true
+    maxMessagesPerSummary: 50
+    cooldownSeconds: 30
+    allowedRoles: []          # 空数组表示所有人都可以使用
+    bannedChannels: []        # 禁止总结的频道
+
+# 新增：频道管理默认配置
+channelManagement:
+  # 默认频道配置模式
+  defaultMode: "whitelist"    # whitelist | blacklist
+  autoManageNewChannels: true # 自动管理新创建的频道
+  
+  # UI配置
+  maxChannelsPerPage: 20      # 每页显示的频道数量
+  sortBy: "position"          # position | name | type

@@ -1,11 +1,13 @@
 {
   "serverId": "1188251479820214372",
-  "allowedChannels": null,
-  "responsiveness": 1,
+  "allowedChannels": [
+    "1188251479820214374"
+  ],
+  "responsiveness": 0.5,
   "personaMappings": {
     "default": {
       "type": "preset",
-      "id": "bking"
+      "id": "default"
     }
   }
 }
