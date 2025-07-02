@@ -92,7 +92,13 @@ class BotClient {
     loggerService.logger.info(
       `Received message from ${message.author.username} in channel ${message.channelId} in guild ${message.guildId}: ${message.content}`,
     );
-    if (!message.content || message.content.trim().length === 0) return; // Ignore empty messages or messages with only attachments
+    if (!message.content || message.content.trim().length === 0) {
+      // Ignore empty messages or messages with only attachments
+      loggerService.logger.info(
+        `Ignoring empty message from ${message.author.username} in channel ${message.channelId} in guild ${message.guildId}`,
+      );
+      return;
+    }
     if (!this.botId) {
       // Ensure botId is set (should be after ClientReady)
       loggerService.logger.warn("Bot ID not set yet, ignoring message.");
@@ -330,20 +336,40 @@ class BotClient {
 
     // 4. Generate and Send Response (if shouldRespond is true)
     if (shouldRespond) {
-      // --- Get Persona and Prompt Template for Responder ---
+      // --- Get Persona, Prompt Template and Language Config for Responder ---
       let systemPromptTemplate: string | undefined;
       let personaDefinition: PersonaDefinition | undefined;
       let personaDetails: string | undefined;
+      let languageConfig: { primary: string; fallback: string; autoDetect: boolean } | undefined;
       const firstMessage = messages.length > 0 ? messages[0] : null; // Safely get first message
 
       if (firstMessage?.guildId || firstMessage?.channelId) {
+        const serverId = firstMessage.guildId ?? firstMessage.channelId; // DMs don't have a guildId, so use the channelId
+        
+        // Get persona information
         personaDefinition = configService.getPersonaDefinitionForContext(
-          firstMessage.guildId ?? firstMessage.channelId, // DMs don't have a guildId, so use the channelId
+          serverId,
           channelId,
         );
         const basePrompts = configService.getPersonaPrompts(); // Load base prompt templates
         systemPromptTemplate = basePrompts?.systemPrompt;
         personaDetails = personaDefinition?.details; // Get details from the resolved persona
+        
+        // Get language configuration
+        const serverConfig = configService.getServerConfig(serverId);
+        if (serverConfig.languageConfig) {
+          languageConfig = serverConfig.languageConfig;
+        } else {
+          // Use default from global config
+          const globalConfig = configService.getConfig();
+          if (globalConfig.language) {
+            languageConfig = {
+              primary: globalConfig.language.defaultPrimary,
+              fallback: globalConfig.language.defaultFallback,
+              autoDetect: globalConfig.language.autoDetectEnabled,
+            };
+          }
+        }
       } else {
         loggerService.logger.warn(
           `Cannot determine guildId for response generation in channel ${channelId}. Cannot apply persona.`,
@@ -386,11 +412,12 @@ class BotClient {
           );
         }
 
-        // Pass the specific target message, template, and details to the responder
+        // Pass the specific target message, template, details, and language config to the responder
         const responseText = await responderService.generateResponse(
           channelId,
           systemPromptTemplate, // Already checked for existence
           personaDetails, // Already checked for existence
+          languageConfig, // Language configuration
           finalTargetMessage ?? undefined,
         );
 
@@ -765,6 +792,152 @@ class BotClient {
             }
             break;
           }
+          case "language": {
+            const action = options.getString("action", true);
+            const language = options.getString("language");
+            const targetChannel = options.getChannel("channel") as Channel;
+
+            // 确保服务器配置中有语言设置
+            if (!serverConfig.languageConfig) {
+              serverConfig.languageConfig = {
+                primary: "auto" as any,
+                fallback: "en" as any,
+                autoDetect: true,
+              };
+            }
+
+            switch (action) {
+              case "set_primary": {
+                if (!language) {
+                  await interaction.editReply(
+                    "Please specify a language code for the primary language.",
+                  );
+                  return;
+                }
+
+                if (targetChannel) {
+                  // TODO: 实现频道特定的语言设置
+                  await interaction.editReply(
+                    "Channel-specific language settings are not yet implemented. Setting server default.",
+                  );
+                  return;
+                }
+
+                serverConfig.languageConfig.primary = language as any;
+                const success =
+                  await configService.saveServerConfig(serverConfig);
+
+                // 获取语言的显示名称
+                const globalConfig = configService.getConfig();
+                const langInfo = globalConfig.language?.supportedLanguages.find(
+                  (l) => l.code === language,
+                );
+                const langDisplay = langInfo
+                  ? `${langInfo.flag} ${langInfo.name}`
+                  : language;
+
+                await interaction.editReply(
+                  success
+                    ? `Primary language set to: **${langDisplay}**`
+                    : "Failed to save language configuration.",
+                );
+                break;
+              }
+              case "set_fallback": {
+                if (!language) {
+                  await interaction.editReply(
+                    "Please specify a language code for the fallback language.",
+                  );
+                  return;
+                }
+
+                if (language === "auto") {
+                  await interaction.editReply(
+                    "Fallback language cannot be 'auto'. Please choose a specific language.",
+                  );
+                  return;
+                }
+
+                serverConfig.languageConfig.fallback = language as any;
+                const success =
+                  await configService.saveServerConfig(serverConfig);
+
+                // 获取语言的显示名称
+                const globalConfig = configService.getConfig();
+                const langInfo = globalConfig.language?.supportedLanguages.find(
+                  (l) => l.code === language,
+                );
+                const langDisplay = langInfo
+                  ? `${langInfo.flag} ${langInfo.name}`
+                  : language;
+
+                await interaction.editReply(
+                  success
+                    ? `Fallback language set to: **${langDisplay}**`
+                    : "Failed to save language configuration.",
+                );
+                break;
+              }
+              case "toggle_auto": {
+                serverConfig.languageConfig.autoDetect =
+                  !serverConfig.languageConfig.autoDetect;
+                const success =
+                  await configService.saveServerConfig(serverConfig);
+
+                await interaction.editReply(
+                  success
+                    ? `Auto-detection **${serverConfig.languageConfig.autoDetect ? "enabled" : "disabled"}**.`
+                    : "Failed to save language configuration.",
+                );
+                break;
+              }
+              case "view": {
+                const langSettings = serverConfig.languageConfig;
+                const globalConfig = configService.getConfig();
+
+                // 获取语言显示信息
+                const getLangDisplay = (code: string) => {
+                  const langInfo =
+                    globalConfig.language?.supportedLanguages.find(
+                      (l) => l.code === code,
+                    );
+                  return langInfo ? `${langInfo.flag} ${langInfo.name}` : code;
+                };
+
+                const langView =
+                  `**Language Configuration:**\n` +
+                  `- Primary Language: ${getLangDisplay(langSettings.primary)}\n` +
+                  `- Fallback Language: ${getLangDisplay(langSettings.fallback)}\n` +
+                  `- Auto-Detection: ${langSettings.autoDetect ? "✅ Enabled" : "❌ Disabled"}`;
+
+                await interaction.editReply(langView);
+                break;
+              }
+              case "list": {
+                const globalConfig = configService.getConfig();
+                const supportedLanguages =
+                  globalConfig.language?.supportedLanguages || [];
+
+                const langList = supportedLanguages
+                  .map(
+                    (lang) =>
+                      `• ${lang.flag} **${lang.name}** (\`${lang.code}\`)`,
+                  )
+                  .join("\n");
+
+                await interaction.editReply(
+                  `**Supported Languages:**\n${langList}`,
+                );
+                break;
+              }
+              default:
+                await interaction.editReply(
+                  "Invalid language action specified.",
+                );
+                return;
+            }
+            break;
+          }
           case "view": {
             // Format the current config for display
             const allowed = serverConfig.allowedChannels
@@ -778,11 +951,29 @@ class BotClient {
               // Optionally load and display name/description if needed
             }
 
+            // 显示语言配置
+            let languageInfo = "Not Set";
+            if (serverConfig.languageConfig) {
+              const globalConfig = configService.getConfig();
+              const getLangDisplay = (code: string) => {
+                const langInfo = globalConfig.language?.supportedLanguages.find(
+                  (l) => l.code === code,
+                );
+                return langInfo ? `${langInfo.flag} ${langInfo.name}` : code;
+              };
+
+              languageInfo =
+                `Primary: ${getLangDisplay(serverConfig?.languageConfig?.primary)}, ` +
+                `Fallback: ${getLangDisplay(serverConfig?.languageConfig?.fallback)}, ` +
+                `Auto-detect: ${serverConfig?.languageConfig?.autoDetect ? "On" : "Off"}`;
+            }
+
             const configView =
               `**Current Server Configuration:**\n` +
               `- Allowed Channels: ${allowed}\n` +
               `- Responsiveness: ${serverConfig.responsiveness}\n` +
-              `- Default Persona Mapping: ${personaInfo}`;
+              `- Default Persona Mapping: ${personaInfo}\n` +
+              `- Language Settings: ${languageInfo}`;
             // TODO: Add display for channel-specific mappings if implemented
             await interaction.editReply(configView);
             break;

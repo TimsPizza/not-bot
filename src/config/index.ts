@@ -330,6 +330,11 @@ class ConfigService {
       personaMappings: {
         default: defaultPersonaRef, // Default mapping for the server
       },
+      languageConfig: {
+        primary: "auto" as any,
+        fallback: "en" as any,
+        autoDetect: true,
+      },
       // maxContextMessages: undefined,
       // maxDailyResponses: undefined,
     };

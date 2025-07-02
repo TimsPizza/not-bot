@@ -1,7 +1,8 @@
 {
   "serverId": "1188251479820214372",
   "allowedChannels": [
-    "1188251479820214374"
+    "1188251479820214374",
+    "1362475810123943936"
   ],
   "responsiveness": 0.5,
   "personaMappings": {
@@ -9,5 +10,10 @@
       "type": "preset",
       "id": "default"
     }
+  },
+  "languageConfig": {
+    "primary": "en",
+    "fallback": "en",
+    "autoDetect": true
   }
 }

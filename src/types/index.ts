@@ -161,6 +161,20 @@ export interface AppConfig {
 export interface PersonaPrompts {
   systemPrompt: string; // Base system prompt template defining the persona
   evaluationPrompt: string; // Prompt template for the LLMEvaluator
+  language_instructions?: {
+    auto_detect?: string;
+    specific_language?: string;
+    language_styles?: Record<string, string>;
+  };
+  summary_prompts?: {
+    basic_summary?: string;
+    direction_instructions?: Record<string, string>;
+    summary_styles?: Record<string, string>;
+    error_messages?: Record<string, string>;
+  };
+  language_detection?: {
+    detect_language_prompt?: string;
+  };
   // Add more specific prompts as needed (e.g., for specific commands or situations)
 }
 

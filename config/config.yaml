@@ -34,7 +34,7 @@ language:
   # 支持的语言列表（用于UI显示）
   supportedLanguages:
     - code: "auto"
-      name: "🤖 自动检测"
+      name: "🤖 auto-detect"
       flag: "🌍"
     - code: "zh"
       name: "中文"

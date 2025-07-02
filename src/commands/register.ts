@@ -11,7 +11,7 @@ import {
 import dotenv from "dotenv";
 import loggerService from "@/logger";
 import configService from "@/config"; // To potentially load persona list later
-import { messageSummaryCommand } from './context/summarize.js';
+import { messageSummaryCommand } from "./context/summarize.js";
 
 dotenv.config();
 
@@ -22,7 +22,9 @@ const rest = new REST({ version: "10" }).setToken(
 (async () => {
   try {
     const clientId = process.env.DISCORD_CLIENT_ID;
-    const guildId = process.env.DISCORD_TEST_GUILD_ID; // Optional: For testing in a specific guild
+    // Optional: For testing in a specific guild
+    // UNUSED, FOR NOW
+    const guildId = process.env.DISCORD_TEST_GUILD_ID; 
 
     if (!clientId) {
       loggerService.logger.error(
@@ -69,7 +71,9 @@ const rest = new REST({ version: "10" }).setToken(
             .addNumberOption((option) =>
               option
                 .setName("value")
-                .setDescription("Responsiveness value")
+                .setDescription(
+                  "Responsiveness value, high is more responsive, low is less responsive",
+                )
                 .setRequired(true)
                 .setMinValue(0.1)
                 .setMaxValue(2.0),
@@ -101,6 +105,48 @@ const rest = new REST({ version: "10" }).setToken(
                 .setDescription("Channel to configure")
                 .setRequired(false),
             ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("language")
+            .setDescription("Configure bot language settings")
+            .addStringOption((option) =>
+              option
+                .setName("action")
+                .setDescription("Action to perform")
+                .setRequired(true)
+                .addChoices(
+                  { name: "Set Primary", value: "set_primary" },
+                  { name: "Set Fallback", value: "set_fallback" },
+                  { name: "Toggle Auto-detect", value: "toggle_auto" },
+                  { name: "View", value: "view" },
+                  { name: "List Supported", value: "list" },
+                ),
+            )
+            .addStringOption((option) =>
+              option
+                .setName("language")
+                .setDescription("Language code to set")
+                .setRequired(false)
+                .addChoices(
+                  { name: "🤖 Auto Detect", value: "auto" },
+                  { name: "🇨🇳 中文", value: "zh" },
+                  { name: "🇺🇸 English", value: "en" },
+                  { name: "🇯🇵 日本語", value: "ja" },
+                  { name: "🇰🇷 한국어", value: "ko" },
+                  { name: "🇪🇸 Español", value: "es" },
+                  { name: "🇫🇷 Français", value: "fr" },
+                  { name: "🇩🇪 Deutsch", value: "de" },
+                  { name: "🇷🇺 Русский", value: "ru" },
+                  { name: "🇵🇹 Português", value: "pt" },
+                ),
+            )
+            .addChannelOption((option) =>
+              option
+                .setName("channel")
+                .setDescription("Channel to configure (optional)")
+                .setRequired(false),
+            ),
         ),
     ];
 
@@ -108,17 +154,17 @@ const rest = new REST({ version: "10" }).setToken(
     const contextMenuCommands = [messageSummaryCommand];
 
     loggerService.logger.info("Started refreshing application commands.");
-    
+
     // 组合所有命令进行注册
     const allCommands = [
-      ...commands.map(cmd => cmd.toJSON()),
-      ...contextMenuCommands
+      ...commands.map((cmd) => cmd.toJSON()),
+      ...contextMenuCommands,
     ];
-    
+
     const data = await rest.put(
-      guildId ? 
-        Routes.applicationGuildCommands(clientId, guildId) :
-        Routes.applicationCommands(clientId),
+      guildId
+        ? Routes.applicationGuildCommands(clientId, guildId)
+        : Routes.applicationCommands(clientId),
       { body: allCommands },
     );
 

@@ -77,6 +77,7 @@ class ResponderService {
     channelId: string,
     systemPromptTemplate: string, // Added
     personaDetails: string, // Added
+    languageConfig?: { primary: string; fallback: string; autoDetect: boolean }, // Added
     targetMessage?: SimpleMessage,
   ): Promise<string | null> {
     // Validate required configuration for primary LLM
@@ -117,11 +118,56 @@ class ResponderService {
     }
 
     try {
-      // Inject persona details into the system prompt template
-      const finalSystemPrompt = systemPromptTemplate.replace(
-        /\{\{PERSONA_DETAILS\}\}/g,
-        personaDetails,
-      );
+      // Generate language instruction based on configuration and prompt templates
+      let languageInstruction = "";
+      if (languageConfig) {
+        const languageNames: Record<string, string> = {
+          zh: "中文",
+          en: "English",
+          ja: "日本語",
+          ko: "한국어",
+          es: "Español",
+          fr: "Français",
+          de: "Deutsch",
+          ru: "Русский",
+          pt: "Português",
+        };
+
+        // Get language instruction templates from prompts
+        const prompts = configService.getPersonaPrompts();
+
+        if (languageConfig.primary === "auto" && languageConfig.autoDetect) {
+          // Use auto-detect template
+          languageInstruction =
+            prompts?.language_instructions?.auto_detect ||
+            "*EXTREMELY IMPORTANT* Automatically detect the language used in the chat context and respond in the corresponding language.";
+        } else if (languageConfig.primary !== "auto") {
+          // Use specific language template
+          const languageName =
+            languageNames[languageConfig.primary] || languageConfig.primary;
+          const fallbackName =
+            languageNames[languageConfig.fallback] || languageConfig.fallback;
+
+          languageInstruction = (
+            prompts?.language_instructions?.specific_language ||
+            "*EXTREMELY IMPORTANT* Please respond primarily in {{LANGUAGE_NAME}}. Even if the context contains messages in other languages, stick to using the specified language. If you cannot use the primary language, use {{FALLBACK_NAME}} as the fallback language."
+          )
+            .replace(/\{\{LANGUAGE_NAME\}\}/g, languageName)
+            .replace(/\{\{FALLBACK_NAME\}\}/g, fallbackName);
+        }
+      }
+
+      // If no language config or instruction, use default auto-detect
+      if (!languageInstruction) {
+        languageInstruction =
+          "*EXTREMELY IMPORTANT* Automatically detect the language used in the chat context and respond in the corresponding language.";
+      }
+
+      // Inject persona details and language instructions into the system prompt template
+      let finalSystemPrompt = systemPromptTemplate
+        .replace(/\{\{PERSONA_DETAILS\}\}/g, personaDetails)
+        .replace(/\{\{LANGUAGE_INSTRUCTION\}\}/g, languageInstruction);
+
       if (
         !finalSystemPrompt.includes(personaDetails) &&
         systemPromptTemplate.includes("{{PERSONA_DETAILS}}")

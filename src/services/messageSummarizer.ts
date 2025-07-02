@@ -377,7 +377,7 @@ export class MessageSummarizer {
     }
 
     // 构建提示词 - 使用简化的提示词生成
-    const summaryPrompt = this.buildSummaryPrompt(
+  const summaryPrompt = this.buildSummaryPrompt(
       formattedMessages,
       config,
       targetLanguage,
