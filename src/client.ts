@@ -8,7 +8,6 @@ import loggerService from "@/logger";
 import scorerService from "@/scorer"; // Ensure this uses getDecisionForBatch
 import {
   PersonaDefinition,
-  PersonaType,
   ScoreDecision,
   SimpleMessage,
 } from "@/types";
@@ -25,6 +24,12 @@ import {
   Partials,
   TextChannel,
 } from "discord.js";
+import {
+  groupedHandlers,
+  GroupedHandlerKey,
+  subcommandHandlers,
+} from "@/commands/config/handlers";
+import type { ConfigCommandContext } from "@/commands/config/types";
 
 class BotClient {
   private client: Client;
@@ -633,7 +638,8 @@ class BotClient {
     //   return;
     // }
 
-    const { commandName, options, guildId, channel, channelId } = interaction;
+    const { commandName, guildId, channel, channelId } = interaction;
+    const options = interaction.options;
     const isDm = channel?.type === ChannelType.DM;
 
     if (commandName === "config") {
@@ -674,416 +680,31 @@ class BotClient {
           guildId ?? channelId, // DMs don't have a guildId, so use the channelId
         ); // Get current or default config
 
-        if (subcommandGroup === "persona") {
-          const invokingChannelId = interaction.channelId;
+        const handlerContext: ConfigCommandContext = {
+          interaction,
+          options,
+          serverConfig,
+          isDm,
+          guildId,
+          channelId,
+          subcommand,
+          subcommandGroup,
+          commandDescriptor,
+        };
 
-          if (!invokingChannelId) {
-            await interaction.editReply(
-              "Unable to determine the current channel for persona configuration.",
-            );
-            return;
-          }
-
-          const channelLabel = interaction.guildId
-            ? `<#${invokingChannelId}>`
-            : "this DM conversation";
-          const contextNoun = interaction.guildId ? "channel" : "conversation";
-
-          switch (subcommand) {
-            case "set": {
-              const presetId = options.getString("persona", true);
-              const presetPersona = configService.getPresetPersona(presetId);
-
-              if (!presetPersona) {
-                await interaction.editReply(
-                  `Error: Preset persona with ID '${presetId}' not found.`,
-                );
-                return;
-              }
-
-              serverConfig.personaMappings[invokingChannelId] = {
-                type: PersonaType.Preset,
-                id: presetId,
-              };
-
-              const success =
-                await configService.saveServerConfig(serverConfig);
-              await interaction.editReply(
-                success
-                  ? `Persona for ${channelLabel} set to: **${presetPersona.name}** (ID: ${presetId}).`
-                  : "Failed to save configuration.",
-              );
-              break;
-            }
-            case "list": {
-              const availablePersonas =
-                configService.getAvailablePresetPersonas();
-              if (availablePersonas.size === 0) {
-                await interaction.editReply(
-                  "No preset personas are currently available.",
-                );
-                return;
-              }
-
-              const personaLines = Array.from(availablePersonas.values()).map(
-                (persona: PersonaDefinition) =>
-                  `• **${persona.name}** (ID: \`${persona.id}\`) - ${persona.description}`,
-              );
-
-              const channelPersonaRef =
-                serverConfig.personaMappings[invokingChannelId] ??
-                serverConfig.personaMappings["default"];
-
-              let activePersonaMessage =
-                `This ${contextNoun} is using the default persona configuration.`;
-
-              if (channelPersonaRef) {
-                if (channelPersonaRef.type === PersonaType.Preset) {
-                  const activePreset = configService.getPresetPersona(
-                    channelPersonaRef.id,
-                  );
-                  if (activePreset) {
-                    activePersonaMessage = `Active persona for this ${contextNoun}: **${activePreset.name}** (ID: \`${activePreset.id}\`).`;
-                  } else {
-                    activePersonaMessage = `Active persona for this ${contextNoun} references missing preset ID \`${channelPersonaRef.id}\`. Using fallback behaviour.`;
-                  }
-                } else {
-                  activePersonaMessage = `Active persona for this ${contextNoun}: Custom persona \`${channelPersonaRef.id}\`.`;
-                }
-              }
-
-              const maxMessageLength = 1900; // stay comfortably under Discord's 2000 char cap
-              const allLines = [
-                activePersonaMessage,
-                "**Available Personas:**",
-                ...personaLines,
-              ];
-
-              const chunks: string[] = [];
-              let currentChunk = "";
-
-              for (const line of allLines) {
-                const safeLine = line ?? "";
-                const nextChunk = currentChunk
-                  ? `${currentChunk}\n${safeLine}`
-                  : safeLine;
-
-                if (nextChunk.length > maxMessageLength) {
-                  if (currentChunk) {
-                    chunks.push(currentChunk);
-                    currentChunk = safeLine;
-                    if (currentChunk.length > maxMessageLength) {
-                      chunks.push(
-                        `${currentChunk.slice(0, maxMessageLength - 3)}...`,
-                      );
-                      currentChunk = "";
-                    }
-                  } else {
-                    chunks.push(
-                      `${safeLine.slice(0, maxMessageLength - 3)}...`,
-                    );
-                    currentChunk = "";
-                  }
-                } else {
-                  currentChunk = nextChunk;
-                }
-              }
-
-              if (currentChunk) {
-                chunks.push(currentChunk);
-              }
-
-              if (chunks.length === 0) {
-                chunks.push(activePersonaMessage);
-              }
-
-              const [firstChunk, ...remainingChunks] = chunks;
-
-              await interaction.editReply(firstChunk ?? activePersonaMessage);
-
-              for (const chunk of remainingChunks) {
-                await interaction.followUp(
-                  isDm
-                    ? { content: chunk }
-                    : { content: chunk, ephemeral: true as const },
-                );
-              }
-              break;
-            }
-            default:
-              await interaction.editReply("Invalid persona action specified.");
-              return;
+        if (subcommandGroup) {
+          if (Object.prototype.hasOwnProperty.call(groupedHandlers, subcommandGroup)) {
+            const handler = groupedHandlers[subcommandGroup as GroupedHandlerKey];
+            await handler(handlerContext);
+          } else {
+            await interaction.editReply("Unknown configuration command.");
           }
         } else {
-          switch (subcommand) {
-            case "channel": {
-              const action = options.getString("action", true);
-              const targetChannel = options.getChannel("channel") as Channel;
-
-              // 如果没有指定频道，使用当前频道
-              const channelToConfig = targetChannel || interaction.channel;
-
-              if (
-                !channelToConfig ||
-                channelToConfig.type !== ChannelType.GuildText
-              ) {
-                await interaction.editReply(
-                  "Invalid channel. Please select a text channel or use this command in a text channel.",
-                );
-                return;
-              }
-
-              const channelId = channelToConfig.id;
-              let allowed = serverConfig.allowedChannels || [];
-              let message: string;
-
-              switch (action) {
-                case "enable":
-                  if (!allowed.includes(channelId)) {
-                    allowed.push(channelId);
-                    message = `Bot is now **enabled** in channel <#${channelId}>.`;
-                  } else {
-                    message = `Bot is already enabled in channel <#${channelId}>.`;
-                  }
-                  break;
-                case "disable":
-                  if (allowed.includes(channelId)) {
-                    allowed = allowed.filter((id) => id !== channelId);
-                    message = `Bot is now **disabled** in channel <#${channelId}>.`;
-                  } else {
-                    message = `Bot is already disabled in channel <#${channelId}>.`;
-                  }
-                  break;
-                case "toggle":
-                  if (allowed.includes(channelId)) {
-                    allowed = allowed.filter((id) => id !== channelId);
-                    message = `Bot is now **disabled** in channel <#${channelId}>.`;
-                  } else {
-                    allowed.push(channelId);
-                    message = `Bot is now **enabled** in channel <#${channelId}>.`;
-                  }
-                  break;
-                default:
-                  await interaction.editReply("Invalid action specified.");
-                  return;
-              }
-
-              serverConfig.allowedChannels =
-                allowed.length > 0 ? allowed : null;
-              const success =
-                await configService.saveServerConfig(serverConfig);
-              await interaction.editReply(
-                success ? message : "Failed to save configuration.",
-              );
-              break;
-            }
-            case "responsiveness": {
-              const value = options.getNumber("value", true);
-              serverConfig.responsiveness = value;
-              const success =
-                await configService.saveServerConfig(serverConfig);
-              await interaction.editReply(
-                success
-                  ? `Responsiveness set to **${value}**.`
-                  : "Failed to save configuration.",
-              );
-              break;
-            }
-            case "language": {
-              const action = options.getString("action", true);
-              const language = options.getString("language");
-              const targetChannel = options.getChannel("channel") as Channel;
-
-              // 确保服务器配置中有语言设置
-              if (!serverConfig.languageConfig) {
-                serverConfig.languageConfig = {
-                  primary: "auto" as any,
-                  fallback: "en" as any,
-                  autoDetect: true,
-                };
-              }
-
-              switch (action) {
-                case "set_primary": {
-                  if (!language) {
-                    await interaction.editReply(
-                      "Please specify a language code for the primary language.",
-                    );
-                    return;
-                  }
-
-                  if (targetChannel) {
-                    // TODO: 实现频道特定的语言设置
-                    await interaction.editReply(
-                      "Channel-specific language settings are not yet implemented. Setting server default.",
-                    );
-                    return;
-                  }
-
-                  serverConfig.languageConfig.primary = language as any;
-                  const success =
-                    await configService.saveServerConfig(serverConfig);
-
-                  // 获取语言的显示名称
-                  const globalConfig = configService.getConfig();
-                  const langInfo =
-                    globalConfig.language?.supportedLanguages.find(
-                      (l) => l.code === language,
-                    );
-                  const langDisplay = langInfo
-                    ? `${langInfo.flag} ${langInfo.name}`
-                    : language;
-
-                  await interaction.editReply(
-                    success
-                      ? `Primary language set to: **${langDisplay}**`
-                      : "Failed to save language configuration.",
-                  );
-                  break;
-                }
-                case "set_fallback": {
-                  if (!language) {
-                    await interaction.editReply(
-                      "Please specify a language code for the fallback language.",
-                    );
-                    return;
-                  }
-
-                  if (language === "auto") {
-                    await interaction.editReply(
-                      "Fallback language cannot be 'auto'. Please choose a specific language.",
-                    );
-                    return;
-                  }
-
-                  serverConfig.languageConfig.fallback = language as any;
-                  const success =
-                    await configService.saveServerConfig(serverConfig);
-
-                  // 获取语言的显示名称
-                  const globalConfig = configService.getConfig();
-                  const langInfo =
-                    globalConfig.language?.supportedLanguages.find(
-                      (l) => l.code === language,
-                    );
-                  const langDisplay = langInfo
-                    ? `${langInfo.flag} ${langInfo.name}`
-                    : language;
-
-                  await interaction.editReply(
-                    success
-                      ? `Fallback language set to: **${langDisplay}**`
-                      : "Failed to save language configuration.",
-                  );
-                  break;
-                }
-                case "toggle_auto": {
-                  serverConfig.languageConfig.autoDetect =
-                    !serverConfig.languageConfig.autoDetect;
-                  const success =
-                    await configService.saveServerConfig(serverConfig);
-
-                  await interaction.editReply(
-                    success
-                      ? `Auto-detection **${serverConfig.languageConfig.autoDetect ? "enabled" : "disabled"}**.`
-                      : "Failed to save language configuration.",
-                  );
-                  break;
-                }
-                case "view": {
-                  const langSettings = serverConfig.languageConfig;
-                  const globalConfig = configService.getConfig();
-
-                  // 获取语言显示信息
-                  const getLangDisplay = (code: string) => {
-                    const langInfo =
-                      globalConfig.language?.supportedLanguages.find(
-                        (l) => l.code === code,
-                      );
-                    return langInfo
-                      ? `${langInfo.flag} ${langInfo.name}`
-                      : code;
-                  };
-
-                  const langView =
-                    `**Language Configuration:**\n` +
-                    `- Primary Language: ${getLangDisplay(langSettings.primary)}\n` +
-                    `- Fallback Language: ${getLangDisplay(langSettings.fallback)}\n` +
-                    `- Auto-Detection: ${langSettings.autoDetect ? "✅ Enabled" : "❌ Disabled"}`;
-
-                  await interaction.editReply(langView);
-                  break;
-                }
-                case "list": {
-                  const globalConfig = configService.getConfig();
-                  const supportedLanguages =
-                    globalConfig.language?.supportedLanguages || [];
-
-                  const langList = supportedLanguages
-                    .map(
-                      (lang) =>
-                        `• ${lang.flag} **${lang.name}** (\`${lang.code}\`)`,
-                    )
-                    .join("\n");
-
-                  await interaction.editReply(
-                    `**Supported Languages:**\n${langList}`,
-                  );
-                  break;
-                }
-                default:
-                  await interaction.editReply(
-                    "Invalid language action specified.",
-                  );
-                  return;
-              }
-              break;
-            }
-            case "view": {
-              // Format the current config for display
-              const allowed = serverConfig.allowedChannels
-                ? serverConfig.allowedChannels
-                    .map((id) => `<#${id}>`)
-                    .join(", ")
-                : "All Channels";
-              // Display the default persona mapping
-              const defaultMapping = serverConfig.personaMappings["default"];
-              let personaInfo = "Not Set";
-              if (defaultMapping) {
-                personaInfo = `Type: ${defaultMapping.type}, ID: ${defaultMapping.id}`;
-                // Optionally load and display name/description if needed
-              }
-
-              // 显示语言配置
-              let languageInfo = "Not Set";
-              if (serverConfig.languageConfig) {
-                const globalConfig = configService.getConfig();
-                const getLangDisplay = (code: string) => {
-                  const langInfo =
-                    globalConfig.language?.supportedLanguages.find(
-                      (l) => l.code === code,
-                    );
-                  return langInfo ? `${langInfo.flag} ${langInfo.name}` : code;
-                };
-
-                languageInfo =
-                  `Primary: ${getLangDisplay(serverConfig?.languageConfig?.primary)}, ` +
-                  `Fallback: ${getLangDisplay(serverConfig?.languageConfig?.fallback)}, ` +
-                  `Auto-detect: ${serverConfig?.languageConfig?.autoDetect ? "On" : "Off"}`;
-              }
-
-              const configView =
-                `**Current Server Configuration:**\n` +
-                `- Allowed Channels: ${allowed}\n` +
-                `- Responsiveness: ${serverConfig.responsiveness}\n` +
-                `- Default Persona Mapping: ${personaInfo}\n` +
-                `- Language Settings: ${languageInfo}`;
-              // TODO: Add display for channel-specific mappings if implemented
-              await interaction.editReply(configView);
-              break;
-            }
-            default:
-              await interaction.editReply("Unknown configuration command.");
+          const handler = subcommandHandlers[subcommand];
+          if (handler) {
+            await handler(handlerContext);
+          } else {
+            await interaction.editReply("Unknown configuration command.");
           }
         }
       } catch (error: any) {
