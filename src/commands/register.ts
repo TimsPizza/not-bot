@@ -19,6 +19,36 @@ const rest = new REST({ version: "10" }).setToken(
   process.env.DISCORD_BOT_TOKEN!,
 );
 
+const availablePresetPersonas = configService.getAvailablePresetPersonas();
+const personaChoices: APIApplicationCommandOptionChoice<string>[] = [];
+
+for (const persona of Array.from(availablePresetPersonas.values()).sort((a, b) =>
+  a.name.localeCompare(b.name),
+)) {
+  if (personaChoices.length >= 25) {
+    loggerService.logger.warn(
+      "Persona choice list exceeded Discord's limit of 25 options. Truncating.",
+    );
+    break;
+  }
+
+  const trimmedName =
+    persona.name.length <= 100
+      ? persona.name
+      : `${persona.name.slice(0, 97)}...`;
+
+  personaChoices.push({
+    name: trimmedName,
+    value: persona.id,
+  });
+}
+
+if (personaChoices.length === 0) {
+  loggerService.logger.warn(
+    "No preset personas available when registering commands. Persona selection choices will be empty.",
+  );
+}
+
 (async () => {
   try {
     const clientId = process.env.DISCORD_CLIENT_ID;
@@ -79,31 +109,26 @@ const rest = new REST({ version: "10" }).setToken(
                 .setMaxValue(2.0),
             ),
         )
-        .addSubcommand((subcommand) =>
-          subcommand
+        .addSubcommandGroup((group) =>
+          group
             .setName("persona")
             .setDescription("Configure bot persona")
-            .addStringOption((option) =>
-              option
-                .setName("action")
-                .setDescription("Action to perform")
-                .setRequired(true)
-                .addChoices(
-                  { name: "Set", value: "set" },
-                  { name: "List", value: "list" },
+            .addSubcommand((subcommand) =>
+              subcommand
+                .setName("set")
+                .setDescription("Set the persona for this channel")
+                .addStringOption((option) =>
+                  option
+                    .setName("persona")
+                    .setDescription("Persona to use for this channel")
+                    .setRequired(true)
+                    .addChoices(...personaChoices),
                 ),
             )
-            .addStringOption((option) =>
-              option
-                .setName("persona")
-                .setDescription("Persona to set")
-                .setRequired(false),
-            )
-            .addChannelOption((option) =>
-              option
-                .setName("channel")
-                .setDescription("Channel to configure")
-                .setRequired(false),
+            .addSubcommand((subcommand) =>
+              subcommand
+                .setName("list")
+                .setDescription("List available personas and show the active one"),
             ),
         )
         .addSubcommand((subcommand) =>
