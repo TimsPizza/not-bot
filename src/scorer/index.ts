@@ -51,18 +51,20 @@ class ScorerService {
       this.scoringRules = configService.getScoringRules();
       if (!this.scoringRules) {
         loggerService.logger.error(
+          { module: "scorer", reason: "scoring rules missing" },
           "Scoring rules not found in configuration. Scorer will not function correctly.",
         );
       }
       if (!this.config) {
         loggerService.logger.error(
+          { module: "scorer", reason: "config missing" },
           "App config not found. Scorer will use defaults or fail.",
         );
       }
     } catch (error) {
       loggerService.logger.error(
-        "Failed to load config/rules in ScorerService:",
-        error,
+        { err: error },
+        "Failed to load config/rules in ScorerService",
       );
     }
   }
@@ -161,8 +163,8 @@ class ScorerService {
             }
           } catch (error) {
             loggerService.logger.warn(
-              `Error executing scoring rule function '${ruleName}' for message ${message.id}:`,
-              error,
+              { err: error, ruleName, messageId: message.id },
+              "Error executing scoring rule function",
             );
           }
         } else {
@@ -197,7 +199,8 @@ class ScorerService {
 
     if (!this.config) {
       loggerService.logger.error(
-        "Cannot get decision for batch, config not loaded.",
+        { module: "scorer", reason: "config not loaded" },
+        "Cannot get decision for batch",
       );
       return ScoreDecision.Discard; // Default to discard if config is missing
     }

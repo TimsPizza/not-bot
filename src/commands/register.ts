@@ -197,6 +197,6 @@ if (personaChoices.length === 0) {
       `Successfully reloaded ${(data as any[]).length} application commands.`,
     );
   } catch (error) {
-    loggerService.logger.error("Error refreshing commands:", error);
+    loggerService.logger.error({ err: error }, "Error refreshing commands");
   }
 })();

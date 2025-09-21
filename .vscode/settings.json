@@ -1,2 +1,10 @@
 {
+  "sqltools.connections": [
+    {
+      "previewLimit": 50,
+      "driver": "SQLite",
+      "name": "discord-bot",
+      "database": "${workspaceFolder:discord-llm-bot}/server_data/bot-data.sqlite"
+    }
+  ]
 }

@@ -1,5 +1,11 @@
 // src/client.ts
 import bufferQueueService from "@/buffer";
+import {
+  GroupedHandlerKey,
+  groupedHandlers,
+  subcommandHandlers,
+} from "@/commands/config/handlers";
+import type { ConfigCommandContext } from "@/commands/config/types";
 import configService from "@/config"; // Import class type
 import contextManagerService from "@/context";
 import llmEvaluatorService from "@/llm/llm_evaluator";
@@ -12,7 +18,6 @@ import {
   SimpleMessage,
   StructuredResponseSegment,
 } from "@/types";
-import type { Channel } from "discord.js";
 import {
   CacheType, // Added
   ChannelType,
@@ -25,12 +30,6 @@ import {
   Partials,
   TextChannel,
 } from "discord.js";
-import {
-  groupedHandlers,
-  GroupedHandlerKey,
-  subcommandHandlers,
-} from "@/commands/config/handlers";
-import type { ConfigCommandContext } from "@/commands/config/types";
 
 class BotClient {
   private client: Client;
@@ -74,11 +73,11 @@ class BotClient {
     ); // Added
 
     this.client.on(Events.Error, (error) => {
-      loggerService.logger.error("Discord client error:", error);
+      loggerService.logger.error({ err: error }, "Discord client error");
     });
 
     this.client.on(Events.Warn, (info) => {
-      loggerService.logger.warn("Discord client warning:", info);
+      loggerService.logger.warn({ info }, "Discord client warning");
     });
   }
 
@@ -400,11 +399,11 @@ class BotClient {
       if (shouldRespond && systemPromptTemplate && personaDetails) {
         // Double-check shouldRespond status
         if (finalTargetMessage) {
-          loggerService.logger.info(
+          loggerService.logger.debug(
             `Generating response targeting message ${finalTargetMessage.id}...`,
           );
         } else {
-          loggerService.logger.info(
+          loggerService.logger.debug(
             `Generating general response for channel ${channelId} based on the latest context...`,
           );
         }
@@ -507,8 +506,8 @@ class BotClient {
         fetchedChannel instanceof TextChannel
           ? fetchedChannel
           : fetchedChannel instanceof DMChannel
-          ? fetchedChannel
-          : null;
+            ? fetchedChannel
+            : null;
 
       if (!sendableChannel) {
         loggerService.logger.error(
@@ -518,7 +517,7 @@ class BotClient {
       }
 
       for (const segment of segments) {
-        const delayMs = Math.max(0, segment.delayMs);
+        const delayMs = calculateDelayMs(segment); //override llm returned delayMs, it sucks
         try {
           if (typeof sendableChannel.sendTyping === "function") {
             await sendableChannel.sendTyping().catch(() => {});
@@ -533,12 +532,16 @@ class BotClient {
           await this.delay(delayMs);
         }
 
-        await this.sendSegmentMessage(sendableChannel, channelId, segment.content);
+        await this.sendSegmentMessage(
+          sendableChannel,
+          channelId,
+          segment.content,
+        );
       }
     } catch (error) {
       loggerService.logger.error(
-        `Failed to process response segments for channel ${channelId}:`,
-        error,
+        { err: error, channelId },
+        "Failed to process response segments",
       );
     }
   }
@@ -556,8 +559,8 @@ class BotClient {
       this.addBotMessageToContext(channelId, sentMessage, content);
     } catch (error) {
       loggerService.logger.error(
-        `Failed to send response to channel ${channelId}:`,
-        error,
+        { err: error, channelId },
+        "Failed to send response segment",
       );
     }
   }
@@ -588,7 +591,9 @@ class BotClient {
     };
 
     const serverId = botSimpleMessage.guildId ?? "DM";
-    contextManagerService.updateContext(channelId, serverId, [botSimpleMessage]);
+    contextManagerService.updateContext(channelId, serverId, [
+      botSimpleMessage,
+    ]);
     loggerService.logger.debug(
       `Added own response (ID: ${sentMessage.id}) to context for channel ${channelId}`,
     );
@@ -754,8 +759,14 @@ class BotClient {
         };
 
         if (subcommandGroup) {
-          if (Object.prototype.hasOwnProperty.call(groupedHandlers, subcommandGroup)) {
-            const handler = groupedHandlers[subcommandGroup as GroupedHandlerKey];
+          if (
+            Object.prototype.hasOwnProperty.call(
+              groupedHandlers,
+              subcommandGroup,
+            )
+          ) {
+            const handler =
+              groupedHandlers[subcommandGroup as GroupedHandlerKey];
             await handler(handlerContext);
           } else {
             await interaction.editReply("Unknown configuration command.");
@@ -805,4 +816,33 @@ class BotClient {
   }
 }
 
+// helper functions below
+
+/**
+ * @description Calculates the delay time by the content length, in simulation of human typing.
+ * @param seg single structured response segment.
+ * @returns
+ */
+function calculateDelayMs(seg: StructuredResponseSegment): number {
+  const MS_PER_CHAR = 170; // 平均每字符170ms (~6 chars/s)
+  const MIN_DELAY = 900; // 最小 0.9s
+  const MAX_DELAY = 6500; // 最大 6.5s
+  const text = seg.content || "";
+
+  const len = text.length;
+  let delay = len * MS_PER_CHAR;
+
+  // pause on the first segment: 0.6s ~ 1.5s
+  delay += 600 + Math.random() * 900;
+
+  // add pause on punctuation
+  if (/[.?!]$/.test(text)) delay += 250 + Math.random() * 200;
+  if (/[,;:]$/.test(text)) delay += 120 + Math.random() * 100;
+
+  // add some jitter
+  delay *= 0.9 + Math.random() * 0.3;
+
+  // limit the range
+  return Math.floor(Math.min(MAX_DELAY, Math.max(MIN_DELAY, delay)));
+}
 export default BotClient;

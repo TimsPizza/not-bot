@@ -14,6 +14,7 @@ import {
   PersonaRef,
   PersonaType,
 } from "@/types"; // Updated imports
+import { initializeDataStore, getDataStore } from "@/db/datastore";
 
 class ConfigService {
   private static instance: ConfigService;
@@ -23,6 +24,7 @@ class ConfigService {
   private currentPersonaPrompts: PersonaPrompts | null = null; // Base prompt templates
   private serverConfigs: Map<string, ServerConfig> = new Map(); // Cache for server configs <serverId, ServerConfig>
   private presetPersonas: Map<string, PersonaDefinition> = new Map(); // Cache for preset personas <presetId, PersonaDefinition>
+  private dataStoreInitialized = false;
 
   private mainConfigPath: string = "";
   private serverDataPath: string = ""; // Base path for server data
@@ -148,51 +150,14 @@ class ConfigService {
       }
       return preset;
     } else if (personaRef.type === PersonaType.Custom) {
-      // Load custom persona from server's data directory
-      const customPersonaPath = path.join(
-        this.serverDataPath,
-        serverId,
-        "personas",
-        `${personaRef.id}.json`,
-      );
-      try {
-        if (fs.existsSync(customPersonaPath)) {
-          const fileContent = fs.readFileSync(customPersonaPath, "utf-8");
-          const customPersona = JSON.parse(fileContent) as PersonaDefinition;
-          // Basic validation
-          if (
-            customPersona.id &&
-            customPersona.name &&
-            customPersona.description &&
-            customPersona.details
-          ) {
-            // Ensure ID matches ref ID
-            if (customPersona.id !== personaRef.id) {
-              loggerService.logger.warn(
-                `Custom persona ID in file ${customPersonaPath} ('${customPersona.id}') differs from reference ID ('${personaRef.id}'). Using reference ID.`,
-              );
-              customPersona.id = personaRef.id;
-            }
-            loggerService.logger.debug(
-              `Loaded custom persona '${customPersona.id}' for server ${serverId}`,
-            );
-            return customPersona;
-          } else {
-            loggerService.logger.error(
-              `Invalid structure in custom persona file: ${customPersonaPath}`,
-            );
-          }
-        } else {
-          loggerService.logger.error(
-            `Custom persona file not found: ${customPersonaPath}`,
-          );
-        }
-      } catch (error: any) {
-        loggerService.logger.error(
-          `Error loading custom persona file ${customPersonaPath}: ${error.message}`,
-        );
+      this.ensureDataStore();
+      const dataStore = getDataStore();
+
+      const storedPersona = dataStore.getCustomPersona(serverId, personaRef.id);
+      if (storedPersona) {
+        return storedPersona;
       }
-      // Fallback if custom load fails
+
       loggerService.logger.warn(
         `Failed to load custom persona '${personaRef.id}' for server ${serverId}. Falling back to default preset.`,
       );
@@ -212,61 +177,21 @@ class ConfigService {
    * @returns {ServerConfig} The server's configuration.
    */
   public getServerConfig(serverId: string): ServerConfig {
+    this.ensureDataStore();
+
     // 1. Check cache
     if (this.serverConfigs.has(serverId)) {
       return this.serverConfigs.get(serverId)!;
     }
 
-    // 2. Try loading from file using serverDataPath
-    const serverSpecificDataPath = path.join(this.serverDataPath, serverId); // Correct variable name
-    const configFilePath = path.join(serverSpecificDataPath, "config.json"); // Correct variable name
-    let loadedConfig: ServerConfig | null = null;
+    const dataStore = getDataStore();
+    let loadedConfig = dataStore.getServerConfig(serverId);
 
-    if (fs.existsSync(configFilePath)) {
-      try {
-        const fileContent = fs.readFileSync(configFilePath, "utf-8");
-        const parsedConfig = JSON.parse(fileContent) as Partial<ServerConfig>;
-        // Basic validation and merging with defaults
-        loadedConfig = {
-          ...this.getDefaultServerConfig(serverId), // Start with defaults
-          ...parsedConfig, // Override with loaded values
-          serverId: serverId, // Ensure serverId is correct
-          // Ensure personaMappings exists and has a default if missing in loaded file
-          personaMappings:
-            parsedConfig.personaMappings &&
-            Object.keys(parsedConfig.personaMappings).length > 0
-              ? parsedConfig.personaMappings
-              : this.getDefaultServerConfig(serverId).personaMappings,
-        };
-        // Add more specific validation if needed (e.g., responsiveness range)
-        if (
-          typeof loadedConfig.responsiveness !== "number" ||
-          loadedConfig.responsiveness < 0
-        ) {
-          loggerService.logger.warn(
-            `Invalid responsiveness value for server ${serverId} in ${configFilePath}. Resetting to default.`,
-          );
-          loadedConfig.responsiveness =
-            this.getDefaultServerConfig(serverId).responsiveness;
-        }
-        loggerService.logger.debug(
-          `Loaded server config for ${serverId} from ${configFilePath}`,
-        );
-      } catch (error: any) {
-        loggerService.logger.error(
-          `Error loading or parsing server config file ${configFilePath}: ${error.message}. Using defaults.`,
-        );
-        loadedConfig = this.getDefaultServerConfig(serverId);
-      }
-    } else {
-      // File doesn't exist or failed to load/parse, use defaults
-      loggerService.logger.debug(
-        `No valid config file found for server ${serverId} at ${configFilePath}. Using defaults.`,
-      );
+    if (!loadedConfig) {
       loadedConfig = this.getDefaultServerConfig(serverId);
+      dataStore.setServerConfig(loadedConfig);
     }
 
-    // 3. Cache and return
     this.serverConfigs.set(serverId, loadedConfig);
     return loadedConfig;
   }
@@ -277,34 +202,17 @@ class ConfigService {
    * @returns {Promise<boolean>} True if successful, false otherwise.
    */
   public async saveServerConfig(serverConfig: ServerConfig): Promise<boolean> {
-    if (!this.serverDataPath) {
-      loggerService.logger.error(
-        "Cannot save server config: SERVER_DATA_PATH is not configured.",
-      );
-      return false;
-    }
-    const serverSpecificDataPath = path.join(
-      this.serverDataPath,
-      serverConfig.serverId,
-    ); // Correct variable name
-    const configFilePath = path.join(serverSpecificDataPath, "config.json"); // Correct variable name
+    this.ensureDataStore();
     try {
-      // Ensure the server-specific directory exists
-      await fs.ensureDir(serverSpecificDataPath);
-
-      const configJson = JSON.stringify(serverConfig, null, 2); // Pretty print JSON
-      await fs.writeFile(configFilePath, configJson, "utf-8");
-
-      // Update cache
+      getDataStore().setServerConfig(serverConfig);
       this.serverConfigs.set(serverConfig.serverId, serverConfig);
-
       loggerService.logger.info(
-        `Successfully saved server config for ${serverConfig.serverId} to ${configFilePath}`,
+        `Persisted server config for ${serverConfig.serverId} through SQLite store.`,
       );
       return true;
     } catch (error: any) {
       loggerService.logger.error(
-        `Error saving server config file ${configFilePath}: ${error.message}`,
+        `Error saving server config for ${serverConfig.serverId}: ${error.message}`,
       );
       return false;
     }
@@ -818,9 +726,22 @@ class ConfigService {
       }
     }
   }
+
+  private ensureDataStore(): void {
+    if (this.dataStoreInitialized) {
+      return;
+    }
+    if (!this.serverDataPath) {
+      loggerService.logger.error(
+        "SERVER_DATA_PATH not configured. SQLite datastore cannot be initialized.",
+      );
+      return;
+    }
+    initializeDataStore(this.serverDataPath);
+    this.dataStoreInitialized = true;
+  }
 }
 
-// Export the singleton instance directly
 const configService = ConfigService.getInstance();
-export default configService; // Export the instance
-export { ConfigService }; // Export the class type if needed elsewhere
+export default configService;
+export { ConfigService };

@@ -187,7 +187,10 @@ export class MessageSummarizer {
     try {
       return await channel.messages.fetch(messageId);
     } catch (error) {
-      loggerService.logger.error(`Failed to fetch target message ${messageId}:`, error);
+      loggerService.logger.error(
+        { err: error, messageId, guildId: channel.guildId },
+        "Failed to fetch target message",
+      );
       throw new Error('The specified message was not found, possibly deleted');
     }
   }
@@ -403,7 +406,7 @@ export class MessageSummarizer {
       
       return response.trim();
     } catch (error) {
-      loggerService.logger.error('Failed to generate summary:', error);
+      loggerService.logger.error({ err: error }, "Failed to generate summary");
       throw new Error('Error generating summary, please try again later');
     }
   }

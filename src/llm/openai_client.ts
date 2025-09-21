@@ -39,7 +39,8 @@ export async function callChatCompletionApi(
   // Ensure config is loaded before proceeding
   if (!config) {
     loggerService.logger.error(
-      "Configuration is not loaded in openai_client.ts. Cannot call API.",
+      { module: "openai_client", reason: "config not loaded" },
+      "Configuration missing. Cannot call LLM API",
     );
     return null;
   }
@@ -86,25 +87,33 @@ export async function callChatCompletionApi(
         ? JSON.stringify(error.error)
         : "No details";
       loggerService.logger.error(
-        `OpenAI API Error calling ${model} via ${clientIdentifier} client: ${status} ${errName} ${errMessage}`,
-        errDetails,
+        {
+          status,
+          errName,
+          errMessage,
+          details: errDetails,
+          model,
+          clientIdentifier,
+        },
+        "OpenAI API error",
       );
     } else if (error instanceof Error) {
       // Handle generic Error objects
       const errName = error.name ?? "Error";
       const errMessage = error.message ?? "No message";
       loggerService.logger.error(
-        `Generic Error calling LLM API ${model} via ${clientIdentifier} client (${errName}): ${errMessage}`,
+        { errName, errMessage, model, clientIdentifier },
+        "Generic error calling LLM API",
       );
       // Safely log the stack if it exists
       if (typeof error.stack === "string") {
-        loggerService.logger.error(`Stack trace: ${error.stack}`);
+        loggerService.logger.error({ stack: error.stack }, "Stack trace");
       }
     } else {
       // Handle other types of errors
       loggerService.logger.error(
-        `Unknown Error calling LLM API ${model} via ${clientIdentifier} client:`,
-        error,
+        { err: error, model, clientIdentifier },
+        "Unknown error calling LLM API",
       );
     }
     return null; // Return null on error

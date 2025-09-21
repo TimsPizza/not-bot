@@ -32,12 +32,11 @@
     // "rootDir": "src", // Specify the root directory of source files
 
     /* Project Structure */
-    "rootDir": "src", // Specify the root directory of source files
     "baseUrl": ".", // Base directory to resolve non-relative module names
     "paths": { // Define module path aliases
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*"], // Which files TypeScript should check
+  "include": ["src/**/*", "scripts/**/*"], // Which files TypeScript should check
   "exclude": ["node_modules", "dist"] // Which files TypeScript should skip
 }

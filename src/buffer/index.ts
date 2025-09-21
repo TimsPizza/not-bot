@@ -31,8 +31,8 @@ class BufferQueueService {
       // TODO: Add listener for config changes to update bufferSize/bufferTimeWindowMs?
     } catch (error) {
       loggerService.logger.error(
+        { err: error },
         "Failed to initialize BufferQueueService with config. Using defaults.",
-        error,
       );
     }
   }
@@ -146,8 +146,8 @@ class BufferQueueService {
           await this.flushCallback(channelId, messagesToFlush);
         } catch (error) {
           loggerService.logger.error(
-            `Error executing flush callback for channel ${channelId}:`,
-            error,
+            { err: error, channelId },
+            "Error executing flush callback",
           );
           // Decide how to handle errors - retry? discard?
           // For now, just log the error. The buffer is already cleared.

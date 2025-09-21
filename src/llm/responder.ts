@@ -239,7 +239,7 @@ class ResponderService {
 
       return structured;
     } catch (error) {
-      loggerService.logger.error("Error generating response:", error);
+      loggerService.logger.error({ err: error }, "Error generating response");
       return null;
     }
   }
@@ -262,8 +262,10 @@ class ResponderService {
       parsed = JSON.parse(cleaned);
     } catch (error) {
       loggerService.logger.warn(
+        {
+          err: error instanceof Error ? error.message : error,
+        },
         "LLM response is not valid JSON for structured segments.",
-        error instanceof Error ? error.message : error,
       );
       return null;
     }

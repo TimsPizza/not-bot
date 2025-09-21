@@ -43,13 +43,16 @@ export const messageSummaryCommand = {
       await showSummaryConfigSelector(interaction, targetMessage);
 
     } catch (error) {
-      loggerService.logger.error('Error in message summary command:', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        userId: interaction.user.id,
-        channelId: interaction.channelId,
-        guildId: interaction.guildId
-      });
+      loggerService.logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          userId: interaction.user.id,
+          channelId: interaction.channelId,
+          guildId: interaction.guildId,
+        },
+        "Error in message summary command",
+      );
       
       const errorMessage = error instanceof Error ? error.message : 'unknown error';
       
@@ -84,17 +87,23 @@ async function showSummaryConfigSelector(
   const serverConfig = serverId ? configService.getServerConfig(serverId) : null;
   
   loggerService.logger.info(`总结功能检查 - 用户: ${interaction.user.tag}, 频道: ${interaction.channelId}, 服务器: ${serverId}`);
-  loggerService.logger.info(`全局总结配置:`, {
-    enabled: globalSummaryConfig?.enabled,
-    exists: !!globalSummaryConfig
-  });
+  loggerService.logger.info(
+    {
+      enabled: globalSummaryConfig?.enabled,
+      exists: !!globalSummaryConfig,
+    },
+    "全局总结配置",
+  );
   
   if (serverConfig) {
-    loggerService.logger.info(`服务器总结配置:`, {
-      enabled: serverConfig.summarySettings?.enabled,
-      exists: !!serverConfig.summarySettings,
-      serverId: serverId
-    });
+    loggerService.logger.info(
+      {
+        enabled: serverConfig.summarySettings?.enabled,
+        exists: !!serverConfig.summarySettings,
+        serverId,
+      },
+      "服务器总结配置",
+    );
   }
 
   // 检查总结功能是否启用（优先检查服务器设置，然后是全局设置）
@@ -115,12 +124,24 @@ async function showSummaryConfigSelector(
       ),
       presetCounts: globalSummaryConfig?.presetCounts || [5, 10, 15, 20]
     };
-    loggerService.logger.info(`使用服务器级总结配置, enabled: ${summaryEnabled}`);
+    loggerService.logger.info(
+      {
+        summaryEnabled,
+        level: "server",
+      },
+      "使用服务器级总结配置",
+    );
   } else if (globalSummaryConfig) {
     // 服务器没有设置，使用全局默认设置
     summaryEnabled = globalSummaryConfig.enabled;
     effectiveConfig = globalSummaryConfig;
-    loggerService.logger.info(`使用全局总结配置, enabled: ${summaryEnabled}`);
+    loggerService.logger.info(
+      {
+        summaryEnabled,
+        level: "global",
+      },
+      "使用全局总结配置",
+    );
   } else {
     // 没有任何配置
     loggerService.logger.warn(`没有找到总结配置 - 全局配置不存在`);
@@ -130,7 +151,10 @@ async function showSummaryConfigSelector(
 
   if (!summaryEnabled) {
     const reason = serverConfig?.summarySettings ? 'server' : 'global';
-    loggerService.logger.info(`Summary feature disabled - reason: ${reason} level configuration disabled`);
+    loggerService.logger.info(
+      { reason },
+      `Summary feature disabled - level configuration disabled`,
+    );
     await interaction.reply({
       content: `❌ Summary feature is disabled (${reason} level setting)`,
       ephemeral: true
@@ -139,7 +163,10 @@ async function showSummaryConfigSelector(
   }
 
   if (!effectiveConfig) {
-    loggerService.logger.error(`Summary feature configuration error - no valid configuration`);
+    loggerService.logger.error(
+      { reason: "no valid configuration" },
+      "Summary feature configuration error",
+    );
     await interaction.reply({
       content: '❌ Summary feature configuration error',
       ephemeral: true
@@ -147,11 +174,14 @@ async function showSummaryConfigSelector(
     return;
   }
 
-  loggerService.logger.info(`Summary feature enabled, using config:`, {
-    minMessages: effectiveConfig.minMessages,
-    maxMessages: effectiveConfig.maxMessages,
-    presetCounts: effectiveConfig.presetCounts
-  });
+  loggerService.logger.info(
+    {
+      minMessages: effectiveConfig.minMessages,
+      maxMessages: effectiveConfig.maxMessages,
+      presetCounts: effectiveConfig.presetCounts,
+    },
+    "Summary feature enabled, using config",
+  );
 
   // 创建预设数量选择器
   const presetOptions = (effectiveConfig.presetCounts || [5, 10, 15, 20]).map((count: number) => ({
@@ -271,7 +301,10 @@ export async function handleSummaryConfigSelect(
     const messageId = parts[2];
     
     if (action !== 'summary' || !messageId || !subAction) {
-      loggerService.logger.warn(`Invalid summary config selection interaction: ${customId}`, { parts });
+      loggerService.logger.warn(
+        { customId, parts },
+        "Invalid summary config selection interaction",
+      );
       return;
     }
 
@@ -294,13 +327,16 @@ export async function handleSummaryConfigSelect(
     }
 
   } catch (error) {
-    loggerService.logger.error('Error handling summary config select:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      customId: interaction.customId,
-      userId: interaction.user.id,
-      values: interaction.values
-    });
+    loggerService.logger.error(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        customId: interaction.customId,
+        userId: interaction.user.id,
+        values: interaction.values,
+      },
+      "Error handling summary config select",
+    );
     
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
@@ -367,12 +403,15 @@ export async function handleSummaryButtonClick(
     }
 
   } catch (error) {
-    loggerService.logger.error('Error handling summary button click:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      customId: interaction.customId,
-      userId: interaction.user.id
-    });
+    loggerService.logger.error(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        customId: interaction.customId,
+        userId: interaction.user.id,
+      },
+      "Error handling summary button click",
+    );
     
     await interaction.reply({
       content: '❌ Error processing button click',
@@ -447,7 +486,7 @@ export async function handleCustomCountModal(
     await updateSummaryConfigSelection(interaction, 'count', count.toString(), messageId!);
 
   } catch (error) {
-    loggerService.logger.error('Error handling custom count modal:', error);
+    loggerService.logger.error({ err: error }, "Error handling custom count modal");
     
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
@@ -557,13 +596,16 @@ async function executeSummaryWithLoading(
     }
 
   } catch (error) {
-    loggerService.logger.error('Error executing summary with loading:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      config: config,
-      userId: interaction.user.id,
-      channelId: interaction.channelId
-    });
+    loggerService.logger.error(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        config,
+        userId: interaction.user.id,
+        channelId: interaction.channelId,
+      },
+      "Error executing summary with loading",
+    );
     
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred while generating summary';
     
