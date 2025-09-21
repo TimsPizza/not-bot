@@ -14,7 +14,15 @@ import {
   PersonaRef,
   PersonaType,
 } from "@/types"; // Updated imports
-import { initializeDataStore, getDataStore } from "@/db/datastore";
+import {
+  initializeDataStore,
+  getServerConfig as loadServerConfigFromDb,
+  ensureServerConfig as ensureServerConfigInDb,
+  upsertServerConfig as persistServerConfig,
+  bulkUpsertBuiltins,
+  getPersonaById as fetchPersonaById,
+  listBuiltInPersonas,
+} from "@/db/datastore";
 
 class ConfigService {
   private static instance: ConfigService;
@@ -95,9 +103,26 @@ class ConfigService {
    * @description Gets a specific loaded preset persona by its ID.
    * @param presetId The ID of the preset persona (filename without extension).
    * @returns {PersonaDefinition | undefined} The persona definition or undefined if not found.
-   */
+  */
   public getPresetPersona(presetId: string): PersonaDefinition | undefined {
-    return this.presetPersonas.get(presetId);
+    const cached = this.presetPersonas.get(presetId);
+    if (cached) {
+      return cached;
+    }
+
+    const record = fetchPersonaById(presetId);
+    if (record && record.scope === "builtin") {
+      const persona: PersonaDefinition = {
+        id: record.id,
+        name: record.name,
+        description: record.description,
+        details: record.details,
+      };
+      this.presetPersonas.set(presetId, persona);
+      return persona;
+    }
+
+    return undefined;
   }
 
   /**
@@ -140,34 +165,51 @@ class ConfigService {
     );
 
     // Load based on type
-    if (personaRef.type === PersonaType.Preset) {
-      const preset = this.getPresetPersona(personaRef.id);
-      if (!preset) {
-        loggerService.logger.error(
-          `Preset persona '${personaRef.id}' referenced by server ${serverId} not found. Falling back to default preset.`,
-        );
-        return this.getPresetPersona("default"); // Fallback
-      }
-      return preset;
-    } else if (personaRef.type === PersonaType.Custom) {
-      this.ensureDataStore();
-      const dataStore = getDataStore();
+    const personaRecord = fetchPersonaById(personaRef.id);
 
-      const storedPersona = dataStore.getCustomPersona(serverId, personaRef.id);
-      if (storedPersona) {
-        return storedPersona;
-      }
-
+    if (!personaRecord) {
       loggerService.logger.warn(
-        `Failed to load custom persona '${personaRef.id}' for server ${serverId}. Falling back to default preset.`,
-      );
-      return this.getPresetPersona("default");
-    } else {
-      loggerService.logger.error(
-        `Unknown persona type '${personaRef.type}' for persona ID '${personaRef.id}' in server ${serverId}. Falling back to default preset.`,
+        `Persona '${personaRef.id}' referenced by server ${serverId} not found in database. Falling back to default preset.`,
       );
       return this.getPresetPersona("default");
     }
+
+    if (
+      personaRef.type === PersonaType.Custom &&
+      personaRecord.scope !== "custom"
+    ) {
+      loggerService.logger.warn(
+        `Persona '${personaRef.id}' expected to be custom but scope is '${personaRecord.scope}'. Falling back to default preset.`,
+      );
+      return this.getPresetPersona("default");
+    }
+
+    if (
+      personaRef.type === PersonaType.Custom &&
+      personaRecord.serverId !== serverId
+    ) {
+      loggerService.logger.warn(
+        `Custom persona '${personaRef.id}' does not belong to server ${serverId}. Falling back to default preset.`,
+      );
+      return this.getPresetPersona("default");
+    }
+
+    if (
+      personaRef.type === PersonaType.Preset &&
+      personaRecord.scope !== "builtin"
+    ) {
+      loggerService.logger.warn(
+        `Persona '${personaRef.id}' expected to be builtin but scope is '${personaRecord.scope}'. Falling back to default preset.`,
+      );
+      return this.getPresetPersona("default");
+    }
+
+    return {
+      id: personaRecord.id,
+      name: personaRecord.name,
+      description: personaRecord.description,
+      details: personaRecord.details,
+    };
   }
 
   /**
@@ -179,17 +221,13 @@ class ConfigService {
   public getServerConfig(serverId: string): ServerConfig {
     this.ensureDataStore();
 
-    // 1. Check cache
     if (this.serverConfigs.has(serverId)) {
       return this.serverConfigs.get(serverId)!;
     }
 
-    const dataStore = getDataStore();
-    let loadedConfig = dataStore.getServerConfig(serverId);
-
+    let loadedConfig = loadServerConfigFromDb(serverId);
     if (!loadedConfig) {
-      loadedConfig = this.getDefaultServerConfig(serverId);
-      dataStore.setServerConfig(loadedConfig);
+      loadedConfig = ensureServerConfigInDb(serverId);
     }
 
     this.serverConfigs.set(serverId, loadedConfig);
@@ -204,7 +242,7 @@ class ConfigService {
   public async saveServerConfig(serverConfig: ServerConfig): Promise<boolean> {
     this.ensureDataStore();
     try {
-      getDataStore().setServerConfig(serverConfig);
+      persistServerConfig(serverConfig);
       this.serverConfigs.set(serverConfig.serverId, serverConfig);
       loggerService.logger.info(
         `Persisted server config for ${serverConfig.serverId} through SQLite store.`,
@@ -252,18 +290,42 @@ class ConfigService {
    * @description Loads all valid persona definition files from the preset personas directory.
    */
   private loadPresetPersonas(): void {
+    this.ensureDataStore();
+
     if (!this.presetPersonasPath) {
       loggerService.logger.warn(
         `PRESET_PERSONAS_PATH is not defined. Cannot load preset personas.`,
       );
-      this.presetPersonas.clear();
+      const persisted = listBuiltInPersonas();
+      this.presetPersonas = new Map(
+        persisted.map((persona) => [
+          persona.id,
+          {
+            id: persona.id,
+            name: persona.name,
+            description: persona.description,
+            details: persona.details,
+          },
+        ]),
+      );
       return;
     }
     if (!fs.existsSync(this.presetPersonasPath)) {
       loggerService.logger.warn(
         `Preset personas directory not found: ${this.presetPersonasPath}. No preset personas loaded.`,
       );
-      this.presetPersonas.clear();
+      const persisted = listBuiltInPersonas();
+      this.presetPersonas = new Map(
+        persisted.map((persona) => [
+          persona.id,
+          {
+            id: persona.id,
+            name: persona.name,
+            description: persona.description,
+            details: persona.details,
+          },
+        ]),
+      );
       return;
     }
 
@@ -274,59 +336,43 @@ class ConfigService {
     try {
       const files = fs.readdirSync(this.presetPersonasPath);
       for (const file of files) {
-        if (file.endsWith(".json")) {
-          // Only load .json files
-          const filePath = path.join(this.presetPersonasPath, file);
-          const personaId = path.basename(file, ".json"); // Use filename as ID
-          try {
-            const fileContent = fs.readFileSync(filePath, "utf-8");
-            const personaData = JSON.parse(
-              fileContent,
-            ) as Partial<PersonaDefinition>;
+        if (!file.endsWith(".json")) {
+          continue;
+        }
+        const filePath = path.join(this.presetPersonasPath, file);
+        const personaId = path.basename(file, ".json");
+        try {
+          const fileContent = fs.readFileSync(filePath, "utf-8");
+          const personaData = JSON.parse(fileContent) as Partial<PersonaDefinition>;
 
-            // Basic validation
-            if (
-              personaData.name &&
-              personaData.description &&
-              personaData.details
-            ) {
-              if (loadedPersonas.has(personaId)) {
-                loggerService.logger.warn(
-                  `Duplicate preset persona ID '${personaId}' found in ${file}. Skipping.`,
-                );
-                continue;
-              }
-              // Ensure the ID from the file matches the filename if present, otherwise use filename
-              const finalId =
-                personaData.id && personaData.id !== personaId
-                  ? personaData.id // Prefer ID from file content if it exists and differs
-                  : personaId;
+          if (personaData.name && personaData.description && personaData.details) {
+            const finalId =
+              personaData.id && personaData.id !== personaId
+                ? personaData.id
+                : personaId;
 
-              if (personaData.id && personaData.id !== personaId) {
-                loggerService.logger.warn(
-                  `Persona ID in file ${file} ('${personaData.id}') differs from filename ('${personaId}'). Using ID from file content.`,
-                );
-              }
-
-              loadedPersonas.set(finalId, {
-                id: finalId,
-                name: personaData.name,
-                description: personaData.description,
-                details: personaData.details,
-              });
-              loggerService.logger.debug(
-                `Loaded preset persona: ${finalId} from ${file}`,
-              );
-            } else {
+            if (loadedPersonas.has(finalId)) {
               loggerService.logger.warn(
-                `Invalid persona structure in file ${file}. Skipping.`,
+                `Duplicate preset persona ID '${finalId}' found. Skipping ${file}.`,
               );
+              continue;
             }
-          } catch (error: any) {
-            loggerService.logger.error(
-              `Error loading or parsing preset persona file ${filePath}: ${error.message}`,
+
+            loadedPersonas.set(finalId, {
+              id: finalId,
+              name: personaData.name,
+              description: personaData.description,
+              details: personaData.details,
+            });
+          } else {
+            loggerService.logger.warn(
+              `Invalid persona structure in file ${file}. Skipping.`,
             );
           }
+        } catch (error: any) {
+          loggerService.logger.error(
+            `Error loading or parsing preset persona file ${filePath}: ${error.message}`,
+          );
         }
       }
     } catch (error: any) {
@@ -335,21 +381,27 @@ class ConfigService {
       );
     }
 
-    if (loadedPersonas.size === 0) {
-      loggerService.logger.warn("No valid preset personas were loaded.");
-    } else {
-      loggerService.logger.info(
-        `Successfully loaded ${loadedPersonas.size} preset personas.`,
-      );
+    if (loadedPersonas.size > 0) {
+      bulkUpsertBuiltins(Array.from(loadedPersonas.values()));
     }
-    this.presetPersonas = loadedPersonas;
 
-    // Ensure a 'default' persona exists, otherwise log a critical warning
+    const persistedBuiltins = listBuiltInPersonas();
+    this.presetPersonas = new Map(
+      persistedBuiltins.map((persona) => [
+        persona.id,
+        {
+          id: persona.id,
+          name: persona.name,
+          description: persona.description,
+          details: persona.details,
+        },
+      ]),
+    );
+
     if (!this.presetPersonas.has("default")) {
       loggerService.logger.error(
         "CRITICAL: Default preset persona ('default.json') not found or failed to load. Bot may not function correctly.",
       );
-      // Optionally, create a minimal fallback default persona here?
     }
   }
 

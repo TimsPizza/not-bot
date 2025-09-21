@@ -1,6 +1,11 @@
 // src/context/index.ts
 import configService from "@/config";
-import { getDataStore, initializeDataStore } from "@/db/datastore";
+import {
+  initializeDataStore,
+  getRecentMessages as fetchRecentMessagesFromDb,
+  persistMessages,
+  markMessageResponded as markMessageRespondedInDb,
+} from "@/db/datastore";
 import loggerService from "@/logger";
 import {
   AppConfig,
@@ -69,19 +74,35 @@ class ContextManagerService {
       return cached;
     }
 
+    const maxMessages = this.contextMaxMessages;
+    const minTimestamp = Date.now() - this.contextMaxAgeSeconds * 1000;
+
     try {
-      const storeContext = getDataStore().getChannelContext(channelId);
-      if (storeContext) {
-        this.contextCache.set(channelId, storeContext);
-        return storeContext;
+      const recentMessages = fetchRecentMessagesFromDb(
+        channelId,
+        maxMessages,
+        minTimestamp,
+      );
+
+      if (!recentMessages.length) {
+        return null;
       }
+
+      const context: ChannelContext = {
+        serverId: recentMessages[0]?.guildId ?? "DM",
+        channelId,
+        messages: recentMessages,
+        lastUpdatedAt: recentMessages[recentMessages.length - 1]?.timestamp ?? Date.now(),
+      };
+      this.contextCache.set(channelId, context);
+      return context;
     } catch (error) {
       loggerService.logger.error(
-        `Failed to read context for channel ${channelId} from SQLite: ${error}`,
+        { err: error, channelId },
+        "Failed to load context from structured storage",
       );
+      return null;
     }
-
-    return null;
   }
 
   public updateContext(
@@ -105,42 +126,42 @@ class ContextManagerService {
     const maxAgeSeconds = this.contextMaxAgeSeconds;
     const maxAgeTimestamp = Date.now() - maxAgeSeconds * 1000;
 
-    let currentContext = this.contextCache.get(channelId);
-    if (!currentContext) {
-      currentContext = {
-        serverId,
-        channelId,
-        messages: [],
-        lastUpdatedAt: Date.now(),
-      };
-    }
-
-    const updatedMessages = [...currentContext.messages, ...newMessages].filter(
-      (msg) => msg.timestamp >= maxAgeTimestamp,
-    );
-
-    if (updatedMessages.length > maxMessages) {
-      updatedMessages.splice(0, updatedMessages.length - maxMessages);
-    }
-
-    currentContext.messages = updatedMessages;
-    currentContext.lastUpdatedAt = Date.now();
-    this.contextCache.set(channelId, currentContext);
-
     try {
-      getDataStore().setChannelContext(currentContext);
+      persistMessages({
+        channelId,
+        serverId: serverId === "DM" ? null : serverId,
+        type: serverId === "DM" ? "dm" : "guild_text",
+        ownerUserId: serverId === "DM" ? newMessages[0]?.authorId ?? null : null,
+        messages: newMessages,
+      });
     } catch (error) {
       loggerService.logger.error(
         { err: error, channelId },
-        "Failed to persist context",
+        "Failed to persist messages for context",
       );
+      return;
     }
+
+    const recentMessages = fetchRecentMessagesFromDb(
+      channelId,
+      maxMessages,
+      maxAgeTimestamp,
+    );
+
+    const context: ChannelContext = {
+      serverId,
+      channelId,
+      messages: recentMessages,
+      lastUpdatedAt: Date.now(),
+    };
+
+    this.contextCache.set(channelId, context);
   }
 
   public markMessageAsResponded(channelId: string, messageId: string): void {
     const context =
       this.contextCache.get(channelId) ??
-      getDataStore().getChannelContext(channelId);
+      this.getContext(channelId);
 
     if (!context) {
       loggerService.logger.warn(
@@ -164,11 +185,11 @@ class ContextManagerService {
     this.contextCache.set(channelId, context);
 
     try {
-      getDataStore().setChannelContext(context);
+      markMessageRespondedInDb(channelId, messageId);
     } catch (error) {
       loggerService.logger.error(
         { err: error, channelId, messageId },
-        "Failed to persist responded context",
+        "Failed to mark message responded in datastore",
       );
     }
   }

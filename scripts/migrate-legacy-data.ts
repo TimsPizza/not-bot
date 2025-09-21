@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import configService from "@/config";
-import { getDataStore, initializeDataStore } from "@/db/datastore";
+import {
+  initializeDataStore,
+  upsertServerConfig as persistServerConfig,
+  persistMessages,
+  upsertPersona,
+} from "@/db/datastore";
 import loggerService from "@/logger";
 import type { ChannelContext, PersonaDefinition, ServerConfig } from "@/types";
 import "dotenv/config";
@@ -38,7 +43,7 @@ async function migrateServerConfigFiles(
           : defaults.personaMappings,
     };
 
-    getDataStore().setServerConfig(merged);
+    persistServerConfig(merged);
     loggerService.logger.info(
       `Migrated server config for ${serverId} into SQLite data store.`,
     );
@@ -74,7 +79,14 @@ async function migrateChannelContexts(
       }
 
       context.serverId = context.serverId ?? serverId;
-      getDataStore().setChannelContext(context);
+      persistMessages({
+        channelId,
+        serverId: serverId === "DM" ? null : serverId,
+        type: serverId === "DM" ? "dm" : "guild_text",
+        ownerUserId:
+          serverId === "DM" ? context.messages[0]?.authorId ?? null : null,
+        messages: context.messages,
+      });
       loggerService.logger.info(
         `Migrated context for channel ${channelId} (server ${serverId}).`,
       );
@@ -111,7 +123,7 @@ async function migrateCustomPersonas(
       }
 
       persona.id = personaId;
-      getDataStore().upsertCustomPersona(serverId, persona);
+      upsertPersona(persona, "custom", serverId, true);
       loggerService.logger.info(
         `Migrated custom persona '${personaId}' for server ${serverId}.`,
       );
