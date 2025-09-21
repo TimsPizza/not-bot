@@ -10,6 +10,7 @@ import {
   PersonaDefinition,
   ScoreDecision,
   SimpleMessage,
+  StructuredResponseSegment,
 } from "@/types";
 import type { Channel } from "discord.js";
 import {
@@ -34,6 +35,7 @@ import type { ConfigCommandContext } from "@/commands/config/types";
 class BotClient {
   private client: Client;
   private botId: string | null = null;
+  private responseQueues: Map<string, Promise<void>> = new Map();
 
   constructor() {
     const config = configService.getConfig(); // Assuming config is loaded synchronously
@@ -420,7 +422,7 @@ class BotClient {
         }
 
         // Pass the specific target message, template, details, and language config to the responder
-        const responseText = await responderService.generateResponse(
+        const responseSegments = await responderService.generateResponse(
           channelId,
           systemPromptTemplate, // Already checked for existence
           personaDetails, // Already checked for existence
@@ -428,9 +430,8 @@ class BotClient {
           finalTargetMessage ?? undefined,
         );
 
-        if (responseText) {
-          // Send the response
-          await this.sendResponse(channelId, responseText);
+        if (responseSegments && responseSegments.length > 0) {
+          await this.enqueueResponseSegments(channelId, responseSegments);
 
           // --- Mark the target message as responded to ---
           // If we had a specific target (from high score or LLM eval), mark it.
@@ -463,78 +464,138 @@ class BotClient {
    * @param channelId The ID of the target channel.
    * @param content The text content of the response.
    */
-  private async sendResponse(
+  private async enqueueResponseSegments(
+    channelId: string,
+    segments: StructuredResponseSegment[],
+  ): Promise<void> {
+    const orderedSegments = [...segments].sort(
+      (a, b) => a.sequence - b.sequence,
+    );
+
+    const previous = this.responseQueues.get(channelId) ?? Promise.resolve();
+    const next = previous
+      .catch((error) => {
+        loggerService.logger.error(
+          `Previous response queue for channel ${channelId} failed:`,
+          error,
+        );
+      })
+      .then(() => this.processResponseSegments(channelId, orderedSegments));
+
+    this.responseQueues.set(channelId, next);
+    await next;
+  }
+
+  private async processResponseSegments(
+    channelId: string,
+    segments: StructuredResponseSegment[],
+  ): Promise<void> {
+    if (segments.length === 0) {
+      return;
+    }
+
+    try {
+      const fetchedChannel = await this.client.channels.fetch(channelId);
+      if (!fetchedChannel) {
+        loggerService.logger.error(
+          `Unable to fetch channel ${channelId} when sending response segments.`,
+        );
+        return;
+      }
+
+      const sendableChannel =
+        fetchedChannel instanceof TextChannel
+          ? fetchedChannel
+          : fetchedChannel instanceof DMChannel
+          ? fetchedChannel
+          : null;
+
+      if (!sendableChannel) {
+        loggerService.logger.error(
+          `Channel ${channelId} is not a supported text channel type. Cannot send response segments.`,
+        );
+        return;
+      }
+
+      for (const segment of segments) {
+        const delayMs = Math.max(0, segment.delayMs);
+        try {
+          if (typeof sendableChannel.sendTyping === "function") {
+            await sendableChannel.sendTyping().catch(() => {});
+          }
+        } catch (typingError) {
+          loggerService.logger.debug(
+            `Failed to send typing indicator before segment in channel ${channelId}: ${typingError}`,
+          );
+        }
+
+        if (delayMs > 0) {
+          await this.delay(delayMs);
+        }
+
+        await this.sendSegmentMessage(sendableChannel, channelId, segment.content);
+      }
+    } catch (error) {
+      loggerService.logger.error(
+        `Failed to process response segments for channel ${channelId}:`,
+        error,
+      );
+    }
+  }
+
+  private async sendSegmentMessage(
+    channel: TextChannel | DMChannel,
     channelId: string,
     content: string,
   ): Promise<void> {
     try {
-      const channel = await this.client.channels.fetch(channelId);
-      if (channel instanceof TextChannel) {
-        // Ensure it's a text channel
-        // Typing indicator might have already been sent before LLM call
-        // await channel.sendTyping();
-        // Add a small delay to make typing seem more natural if needed
-        // await new Promise((resolve) => setTimeout(resolve, Math.random() * 100 + 50));
-
-        // Send the message and get the result to access its ID and timestamp
-        const sentMessage = await channel.send(content);
-        loggerService.logger.info(
-          `Sent response to channel ${channelId}: "${content}" (ID: ${sentMessage.id})`,
-        );
-
-        // --- Add Bot's Own Response to Context ---
-        // This is crucial for the bot to remember what it said
-        if (this.botId && this.client.user) {
-          // Ensure botId and client.user are available
-          const botSimpleMessage: SimpleMessage = {
-            id: sentMessage.id, // Use the actual ID of the sent message
-            channelId: channelId,
-            guildId: channel.guildId,
-            authorId: this.botId,
-            authorUsername: this.client.user.username, // Use actual bot username
-            content: content,
-            timestamp: sentMessage.createdTimestamp, // Use actual timestamp
-            mentionedUsers: [],
-            mentionedRoles: [],
-            mentionsEveryone: false,
-            isBot: true,
-            respondedTo: true, // Mark bot's own message as 'responded' (it's the response itself)
-            hasBeenRepliedTo: false, // 新增：用于总结功能
-          };
-          // Pass serverId (guildId) if available when adding bot's own message
-          if (botSimpleMessage.guildId) {
-            contextManagerService.updateContext(
-              channelId,
-              botSimpleMessage.guildId,
-              [botSimpleMessage],
-            );
-            loggerService.logger.debug(
-              `Added own response (ID: ${sentMessage.id}) to context for channel ${channelId}`,
-            );
-          } else {
-            loggerService.logger.warn(
-              `Could not determine guildId when adding bot response ${sentMessage.id} to context for channel ${channelId}.`,
-            );
-          }
-        }
-        // -----------------------------------------
-      } else if (channel instanceof DMChannel) {
-        // Handle DMs
-        await channel.send(content);
-        loggerService.logger.info(
-          `Sent DM response to user in channel ${channelId}: "${content}"`,
-        );
-      } else {
-        loggerService.logger.warn(
-          `Cannot send response: Channel ${channelId} is not a text channel.`,
-        );
-      }
+      const sentMessage = await channel.send(content);
+      loggerService.logger.info(
+        `Sent response to channel ${channelId}: "${content}" (ID: ${sentMessage.id})`,
+      );
+      this.addBotMessageToContext(channelId, sentMessage, content);
     } catch (error) {
       loggerService.logger.error(
         `Failed to send response to channel ${channelId}:`,
         error,
       );
     }
+  }
+
+  private addBotMessageToContext(
+    channelId: string,
+    sentMessage: Message,
+    content: string,
+  ): void {
+    if (!this.botId || !this.client.user) {
+      return;
+    }
+
+    const botSimpleMessage: SimpleMessage = {
+      id: sentMessage.id,
+      channelId,
+      guildId: sentMessage.guildId ?? null,
+      authorId: this.botId,
+      authorUsername: this.client.user.username,
+      content,
+      timestamp: sentMessage.createdTimestamp,
+      mentionedUsers: [],
+      mentionedRoles: [],
+      mentionsEveryone: false,
+      isBot: true,
+      respondedTo: true,
+      hasBeenRepliedTo: false,
+    };
+
+    const serverId = botSimpleMessage.guildId ?? "DM";
+    contextManagerService.updateContext(channelId, serverId, [botSimpleMessage]);
+    loggerService.logger.debug(
+      `Added own response (ID: ${sentMessage.id}) to context for channel ${channelId}`,
+    );
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

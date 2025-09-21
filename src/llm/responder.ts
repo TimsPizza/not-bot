@@ -1,8 +1,8 @@
 // src/llm/responder.ts
-import loggerService from "@/logger";
 import configService from "@/config";
 import contextManagerService from "@/context";
-import { SimpleMessage, PersonaPrompts, AppConfig } from "@/types";
+import loggerService from "@/logger";
+import { AppConfig, SimpleMessage, StructuredResponseSegment } from "@/types";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { callChatCompletionApi } from "./openai_client";
 
@@ -79,7 +79,7 @@ class ResponderService {
     personaDetails: string, // Added
     languageConfig?: { primary: string; fallback: string; autoDetect: boolean }, // Added
     targetMessage?: SimpleMessage,
-  ): Promise<string | null> {
+  ): Promise<StructuredResponseSegment[] | null> {
     // Validate required configuration for primary LLM
     if (
       !this.config ||
@@ -191,9 +191,15 @@ class ResponderService {
         });
       }
 
+      chatMessages.push({
+        role: "system",
+        content:
+          'You must answer using only a JSON array. Each element must include `sequence` (integer starting at 1), `delay_ms` (non-negative integer), and `content` (string). Example: [{"sequence":1,"delay_ms":1200,"content":"Hello!"}]. Do NOT include any text before or after the JSON array. Also you should choose proper `delay_ms` for each message to act like a human is typing',
+      });
+
       // Call the API using the main client (for response generation)
       // Use non-null assertion (!) as config is validated at the start of the method
-      const responseText = await callChatCompletionApi(
+      const rawResponse = await callChatCompletionApi(
         "main",
         this.config!.primaryLlmModel,
         chatMessages,
@@ -201,29 +207,115 @@ class ResponderService {
         300, // max_tokens - adjust based on expected response length
       );
 
-      if (responseText) {
-        // Basic response filtering
-        const cleanedText = responseText.trim();
-        if (cleanedText.toLowerCase().includes("as an ai language model")) {
-          loggerService.logger.warn(
-            "LLM response contained boilerplate AI disclaimer. Discarding.",
-          );
-          return null;
-        }
-        if (cleanedText.length === 0) {
-          loggerService.logger.warn("LLM generated an empty response.");
-          return null;
-        }
-
-        loggerService.logger.info(`Generated response: "${cleanedText}"`);
-        return cleanedText;
+      if (!rawResponse) {
+        return null;
       }
 
-      return null;
+      const cleanedText = rawResponse.trim();
+      if (cleanedText.length === 0) {
+        loggerService.logger.warn("LLM generated an empty response.");
+        return null;
+      }
+      if (cleanedText.toLowerCase().includes("as an ai language model")) {
+        loggerService.logger.warn(
+          "LLM response contained boilerplate AI disclaimer. Discarding.",
+        );
+        return null;
+      }
+
+      const structured = this.parseStructuredResponse(cleanedText);
+      if (!structured) {
+        loggerService.logger.warn(
+          "Failed to parse structured response from LLM. Falling back to single message.",
+        );
+        return [
+          {
+            sequence: 1,
+            delayMs: 0,
+            content: cleanedText,
+          },
+        ];
+      }
+
+      return structured;
     } catch (error) {
       loggerService.logger.error("Error generating response:", error);
       return null;
     }
+  }
+
+  private parseStructuredResponse(
+    raw: string,
+  ): StructuredResponseSegment[] | null {
+    if (!raw) {
+      return null;
+    }
+
+    let cleaned = raw.trim();
+    if (cleaned.startsWith("```")) {
+      cleaned = cleaned.replace(/^```(?:json)?/i, "");
+      cleaned = cleaned.replace(/```$/i, "");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (error) {
+      loggerService.logger.warn(
+        "LLM response is not valid JSON for structured segments.",
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    }
+
+    const segmentsSource = Array.isArray(parsed)
+      ? parsed
+      : (parsed as { messages?: unknown }).messages;
+
+    if (!Array.isArray(segmentsSource)) {
+      loggerService.logger.warn(
+        "Structured response JSON did not contain an array of messages.",
+      );
+      return null;
+    }
+
+    const segments: StructuredResponseSegment[] = segmentsSource
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+
+        const sequenceRaw =
+          (entry as { sequence?: unknown }).sequence ?? index + 1;
+        const delayRaw = (entry as { delay_ms?: unknown }).delay_ms ?? 0;
+        const contentRaw = (entry as { content?: unknown }).content;
+
+        const sequence = Number(sequenceRaw);
+        const delayMs = Number(delayRaw);
+        const content =
+          typeof contentRaw === "string" ? contentRaw.trim() : undefined;
+
+        if (!Number.isFinite(sequence) || !content) {
+          return null;
+        }
+
+        return {
+          sequence: Math.max(1, Math.round(sequence)),
+          delayMs:
+            Number.isFinite(delayMs) && delayMs >= 0 ? Math.round(delayMs) : 0,
+          content,
+        } satisfies StructuredResponseSegment;
+      })
+      .filter(
+        (segment): segment is StructuredResponseSegment => segment !== null,
+      );
+
+    if (segments.length === 0) {
+      return null;
+    }
+
+    segments.sort((a, b) => a.sequence - b.sequence);
+    return segments;
   }
 }
 

@@ -71,6 +71,12 @@ export interface ChannelContext {
   lastUpdatedAt: number; // Unix timestamp
 }
 
+export interface StructuredResponseSegment {
+  sequence: number;
+  delayMs: number;
+  content: string;
+}
+
 /**
  * @description Structure for scoring rules loaded from JSON.
  * Example: { "mentionBot": { "weight": 50, "description": "User mentioned the bot" } }
