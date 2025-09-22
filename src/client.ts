@@ -865,6 +865,9 @@ function calculateDelayMs(seg: StructuredResponseSegment): number {
   delay *= 0.9 + Math.random() * 0.3;
 
   // limit the range
-  return Math.floor(Math.min(MAX_DELAY, Math.max(MIN_DELAY, delay)));
+  const calculeted = Math.floor(
+    Math.min(MAX_DELAY, Math.max(MIN_DELAY, delay)),
+  );
+  return Math.max(calculeted, seg.delayMs);
 }
 export default BotClient;
