@@ -215,6 +215,7 @@ export interface ServerConfig {
   };
   maxContextMessages?: number; // Optional override for global setting
   maxDailyResponses?: number; // Optional override for global setting (implementation TBD)
+  completionDelaySeconds?: number; // Delay before firing completion request
   // Add other server-specific settings here
   
   // 新增：语言配置

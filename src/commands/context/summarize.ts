@@ -1,30 +1,29 @@
 import {
-  ApplicationCommandType,
-  MessageContextMenuCommandInteraction,
-  TextChannel,
-  EmbedBuilder,
   ActionRowBuilder,
-  StringSelectMenuBuilder,
+  ApplicationCommandType,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
+  EmbedBuilder,
+  Message,
+  MessageContextMenuCommandInteraction,
   ModalBuilder,
+  ModalSubmitInteraction,
+  StringSelectMenuBuilder,
+  StringSelectMenuInteraction,
+  TextChannel,
   TextInputBuilder,
   TextInputStyle,
-  ModalSubmitInteraction,
-  StringSelectMenuInteraction,
-  InteractionResponse,
-  Message,
-  ButtonBuilder,
-  ButtonStyle,
-  ButtonInteraction
-} from 'discord.js';
-import { MessageSummarizer } from '../../services/messageSummarizer';
-import { SummaryConfig } from '../../types';
-import { ConfigService } from '../../config';
-import loggerService from '../../logger';
+} from "discord.js";
+import { ConfigService } from "../../config";
+import loggerService from "../../logger";
+import { MessageSummarizer } from "../../services/messageSummarizer";
+import { SummaryConfig } from "../../types";
 
 export const messageSummaryCommand = {
-  name: '📊 Summarize Messages',
+  name: "📊 Summarize Messages",
   type: ApplicationCommandType.Message,
-  
+
   async execute(interaction: MessageContextMenuCommandInteraction) {
     try {
       const targetMessage = interaction.targetMessage;
@@ -33,15 +32,14 @@ export const messageSummaryCommand = {
       // 检查基本权限
       if (!channel || !channel.isTextBased()) {
         await interaction.reply({
-          content: '❌ Summary feature can only be used in text channels',
-          ephemeral: true
+          content: "❌ Summary feature can only be used in text channels",
+          ephemeral: true,
         });
         return;
       }
 
       // 显示总结配置选择器
       await showSummaryConfigSelector(interaction, targetMessage);
-
     } catch (error) {
       loggerService.logger.error(
         {
@@ -53,22 +51,23 @@ export const messageSummaryCommand = {
         },
         "Error in message summary command",
       );
-      
-      const errorMessage = error instanceof Error ? error.message : 'unknown error';
-      
+
+      const errorMessage =
+        error instanceof Error ? error.message : "unknown error";
+
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp({
           content: `❌ ${errorMessage}`,
-          ephemeral: true
+          ephemeral: true,
         });
       } else {
         await interaction.reply({
           content: `❌ ${errorMessage}`,
-          ephemeral: true
+          ephemeral: true,
         });
       }
     }
-  }
+  },
 };
 
 /**
@@ -76,40 +75,22 @@ export const messageSummaryCommand = {
  */
 async function showSummaryConfigSelector(
   interaction: MessageContextMenuCommandInteraction,
-  targetMessage: Message
+  targetMessage: Message,
 ): Promise<void> {
   const configService = ConfigService.getInstance();
   const globalConfig = configService.getConfig();
   const globalSummaryConfig = globalConfig.summary;
-  
+
   // 获取服务器配置
   const serverId = interaction.guildId;
-  const serverConfig = serverId ? configService.getServerConfig(serverId) : null;
-  
-  loggerService.logger.info(`总结功能检查 - 用户: ${interaction.user.tag}, 频道: ${interaction.channelId}, 服务器: ${serverId}`);
-  loggerService.logger.info(
-    {
-      enabled: globalSummaryConfig?.enabled,
-      exists: !!globalSummaryConfig,
-    },
-    "全局总结配置",
-  );
-  
-  if (serverConfig) {
-    loggerService.logger.info(
-      {
-        enabled: serverConfig.summarySettings?.enabled,
-        exists: !!serverConfig.summarySettings,
-        serverId,
-      },
-      "服务器总结配置",
-    );
-  }
+  const serverConfig = serverId
+    ? configService.getServerConfig(serverId)
+    : null;
 
   // 检查总结功能是否启用（优先检查服务器设置，然后是全局设置）
   let summaryEnabled = false;
   let effectiveConfig: any = null;
-  
+
   if (serverConfig?.summarySettings) {
     // 服务器有自定义设置，使用服务器设置
     summaryEnabled = serverConfig.summarySettings.enabled;
@@ -120,17 +101,10 @@ async function showSummaryConfigSelector(
       minMessages: globalSummaryConfig?.minMessages || 3,
       maxMessages: Math.min(
         serverConfig.summarySettings.maxMessagesPerSummary || 50,
-        globalSummaryConfig?.maxMessages || 50
+        globalSummaryConfig?.maxMessages || 50,
       ),
-      presetCounts: globalSummaryConfig?.presetCounts || [5, 10, 15, 20]
+      presetCounts: globalSummaryConfig?.presetCounts || [5, 10, 15, 20],
     };
-    loggerService.logger.info(
-      {
-        summaryEnabled,
-        level: "server",
-      },
-      "使用服务器级总结配置",
-    );
   } else if (globalSummaryConfig) {
     // 服务器没有设置，使用全局默认设置
     summaryEnabled = globalSummaryConfig.enabled;
@@ -150,14 +124,14 @@ async function showSummaryConfigSelector(
   }
 
   if (!summaryEnabled) {
-    const reason = serverConfig?.summarySettings ? 'server' : 'global';
+    const reason = serverConfig?.summarySettings ? "server" : "global";
     loggerService.logger.info(
       { reason },
       `Summary feature disabled - level configuration disabled`,
     );
     await interaction.reply({
       content: `❌ Summary feature is disabled (${reason} level setting)`,
-      ephemeral: true
+      ephemeral: true,
     });
     return;
   }
@@ -168,13 +142,13 @@ async function showSummaryConfigSelector(
       "Summary feature configuration error",
     );
     await interaction.reply({
-      content: '❌ Summary feature configuration error',
-      ephemeral: true
+      content: "❌ Summary feature configuration error",
+      ephemeral: true,
     });
     return;
   }
 
-  loggerService.logger.info(
+  loggerService.logger.debug(
     {
       minMessages: effectiveConfig.minMessages,
       maxMessages: effectiveConfig.maxMessages,
@@ -184,106 +158,125 @@ async function showSummaryConfigSelector(
   );
 
   // 创建预设数量选择器
-  const presetOptions = (effectiveConfig.presetCounts || [5, 10, 15, 20]).map((count: number) => ({
-    label: `${count} messages`,
-    value: `preset_${count}`,
-    description: `Summarize ${count} messages`,
-    emoji: '📊'
-  }));
+  const presetOptions = (effectiveConfig.presetCounts || [5, 10, 15, 20]).map(
+    (count: number) => ({
+      label: `${count} messages`,
+      value: `preset_${count}`,
+      description: `Summarize ${count} messages`,
+      emoji: "📊",
+    }),
+  );
 
   // 添加自定义选项
   presetOptions.push({
-    label: '🔧 Custom Count',
-    value: 'custom',
+    label: "🔧 Custom Count",
+    value: "custom",
     description: `Custom message count (${effectiveConfig.minMessages}-${effectiveConfig.maxMessages} messages)`,
-    emoji: '⚙️'
+    emoji: "⚙️",
   });
 
   const countSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`summary_count_${targetMessage.id}`)
-    .setPlaceholder('Select number of messages to summarize...')
+    .setPlaceholder("Select number of messages to summarize...")
     .addOptions(presetOptions);
 
   // 创建方向选择器
   const directionSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`summary_direction_${targetMessage.id}`)
-    .setPlaceholder('Select summary direction...')
+    .setPlaceholder("Select summary direction...")
     .addOptions([
       {
-        label: '📈 Later',
-        value: 'forward',
-        description: 'Summarize messages after this message',
-        emoji: '📈'
+        label: "📈 Later",
+        value: "forward",
+        description: "Summarize messages after this message",
+        emoji: "📈",
       },
       {
-        label: '📉 Earlier', 
-        value: 'backward',
-        description: 'Summarize messages before this message',
-        emoji: '📉'
+        label: "📉 Earlier",
+        value: "backward",
+        description: "Summarize messages before this message",
+        emoji: "📉",
       },
       {
-        label: '🎯 Around',
-        value: 'around',
-        description: 'Summarize messages around this message',
-        emoji: '🎯'
-      }
+        label: "🎯 Around",
+        value: "around",
+        description: "Summarize messages around this message",
+        emoji: "🎯",
+      },
     ]);
 
   // 创建发送模式选择器
   const sendModeSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`summary_mode_${targetMessage.id}`)
-    .setPlaceholder('Select visibility mode...')
+    .setPlaceholder("Select visibility mode...")
     .addOptions([
       {
-        label: '🌍 Public',
-        value: 'public',
-        description: 'Send summary to channel (visible to everyone)',
-        emoji: '🌍'
+        label: "🌍 Public",
+        value: "public",
+        description: "Send summary to channel (visible to everyone)",
+        emoji: "🌍",
       },
       {
-        label: '🔒 Private',
-        value: 'private', 
-        description: 'Send summary privately (only you can see)',
-        emoji: '🔒'
-      }
+        label: "🔒 Private",
+        value: "private",
+        description: "Send summary privately (only you can see)",
+        emoji: "🔒",
+      },
     ]);
 
   // 创建确认和取消按钮
   const confirmButton = new ButtonBuilder()
     .setCustomId(`summary_confirm_${targetMessage.id}`)
-    .setLabel('Generate Summary')
+    .setLabel("Generate Summary")
     .setStyle(ButtonStyle.Primary)
-    .setEmoji('✅')
+    .setEmoji("✅")
     .setDisabled(true); // 初始禁用，直到所有选项都选择了
 
   const cancelButton = new ButtonBuilder()
     .setCustomId(`summary_cancel_${targetMessage.id}`)
-    .setLabel('Cancel')
+    .setLabel("Cancel")
     .setStyle(ButtonStyle.Secondary)
-    .setEmoji('❌');
+    .setEmoji("❌");
 
   const embed = new EmbedBuilder()
-    .setTitle('📊 Message Summary Configuration')
-    .setDescription(`Configure summary settings for messages around:\n\n> ${targetMessage.content.slice(0, 100)}${targetMessage.content.length > 100 ? '...' : ''}`)
+    .setTitle("📊 Message Summary Configuration")
+    .setDescription(
+      `Configure summary settings for messages around:\n\n> ${targetMessage.content.slice(0, 100)}${targetMessage.content.length > 100 ? "..." : ""}`,
+    )
     .addFields(
-      { name: '👤 Requested by', value: `${interaction.user}`, inline: true },
-      { name: '📅 Target message time', value: `<t:${Math.floor(targetMessage.createdTimestamp / 1000)}:f>`, inline: true },
-      { name: '📍 Channel', value: `${interaction.channel}`, inline: true }
+      { name: "👤 Requested by", value: `${interaction.user}`, inline: true },
+      {
+        name: "📅 Target message time",
+        value: `<t:${Math.floor(targetMessage.createdTimestamp / 1000)}:f>`,
+        inline: true,
+      },
+      { name: "📍 Channel", value: `${interaction.channel}`, inline: true },
     )
     .setColor(0x3498db)
-    .setFooter({ text: 'Select all options below, then click "Generate Summary"' });
+    .setFooter({
+      text: 'Select all options below, then click "Generate Summary"',
+    });
 
   const rows = [
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(countSelectMenu),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(directionSelectMenu),
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sendModeSelectMenu),
-    new ActionRowBuilder<ButtonBuilder>().addComponents(confirmButton, cancelButton)
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      countSelectMenu,
+    ),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      directionSelectMenu,
+    ),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      sendModeSelectMenu,
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      confirmButton,
+      cancelButton,
+    ),
   ];
 
   await interaction.reply({
     embeds: [embed],
     components: rows,
-    ephemeral: true
+    ephemeral: true,
   });
 }
 
@@ -291,16 +284,16 @@ async function showSummaryConfigSelector(
  * 处理总结配置选择
  */
 export async function handleSummaryConfigSelect(
-  interaction: StringSelectMenuInteraction
+  interaction: StringSelectMenuInteraction,
 ): Promise<void> {
   try {
     const customId = interaction.customId;
-    const parts = customId.split('_');
+    const parts = customId.split("_");
     const action = parts[0];
     const subAction = parts[1];
     const messageId = parts[2];
-    
-    if (action !== 'summary' || !messageId || !subAction) {
+
+    if (action !== "summary" || !messageId || !subAction) {
       loggerService.logger.warn(
         { customId, parts },
         "Invalid summary config selection interaction",
@@ -314,18 +307,22 @@ export async function handleSummaryConfigSelect(
     const value = interaction.values[0];
 
     if (!value) {
-      loggerService.logger.warn('No value selected in interaction');
+      loggerService.logger.warn("No value selected in interaction");
       return;
     }
 
-    if (subActionStr === 'count' && value === 'custom') {
+    if (subActionStr === "count" && value === "custom") {
       // 显示自定义数量输入Modal
       await showCustomCountModal(interaction, messageIdStr);
     } else {
       // 只更新状态，不执行总结
-      await updateSummaryConfigSelection(interaction, subActionStr, value, messageIdStr);
+      await updateSummaryConfigSelection(
+        interaction,
+        subActionStr,
+        value,
+        messageIdStr,
+      );
     }
-
   } catch (error) {
     loggerService.logger.error(
       {
@@ -337,11 +334,11 @@ export async function handleSummaryConfigSelect(
       },
       "Error handling summary config select",
     );
-    
+
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
-        content: '❌ Error processing configuration selection',
-        ephemeral: true
+        content: "❌ Error processing configuration selection",
+        ephemeral: true,
       });
     }
   }
@@ -351,57 +348,62 @@ export async function handleSummaryConfigSelect(
  * 处理按钮交互（确认/取消）
  */
 export async function handleSummaryButtonClick(
-  interaction: ButtonInteraction
+  interaction: ButtonInteraction,
 ): Promise<void> {
   try {
     const customId = interaction.customId;
-    const parts = customId.split('_');
+    const parts = customId.split("_");
     const action = parts[0];
     const subAction = parts[1];
     const messageId = parts[2];
-    
-    if (action !== 'summary' || !messageId) {
+
+    if (action !== "summary" || !messageId) {
       return;
     }
 
     const stateKey = `${interaction.user.id}_${messageId}`;
     const currentState = configStates.get(stateKey);
 
-    if (subAction === 'cancel') {
+    if (subAction === "cancel") {
       // 取消操作
       configStates.delete(stateKey);
       await interaction.update({
-        content: '❌ Summary configuration cancelled',
+        content: "❌ Summary configuration cancelled",
         embeds: [],
-        components: []
+        components: [],
       });
       return;
     }
 
-    if (subAction === 'confirm') {
-      if (!currentState || !currentState.count || !currentState.direction || !currentState.sendMode) {
+    if (subAction === "confirm") {
+      if (
+        !currentState ||
+        !currentState.count ||
+        !currentState.direction ||
+        !currentState.sendMode
+      ) {
         await interaction.reply({
-          content: '❌ Please complete all configuration options before confirming',
-          ephemeral: true
+          content:
+            "❌ Please complete all configuration options before confirming",
+          ephemeral: true,
         });
         return;
       }
 
       // 显示loading状态
       await interaction.update({
-        content: '🤖 Bot is thinking... Generating summary, please wait.',
+        content: "🤖 Bot is thinking... Generating summary, please wait.",
         embeds: [],
-        components: []
+        components: [],
       });
 
       // 执行总结
       const config = currentState as SummaryConfig;
       await executeSummaryWithLoading(interaction, config);
-      
+
       // 清理状态
       configStates.delete(stateKey);
     }
-
   } catch (error) {
     loggerService.logger.error(
       {
@@ -412,10 +414,10 @@ export async function handleSummaryButtonClick(
       },
       "Error handling summary button click",
     );
-    
+
     await interaction.reply({
-      content: '❌ Error processing button click',
-      ephemeral: true
+      content: "❌ Error processing button click",
+      ephemeral: true,
     });
   }
 }
@@ -425,25 +427,29 @@ export async function handleSummaryButtonClick(
  */
 async function showCustomCountModal(
   interaction: StringSelectMenuInteraction,
-  messageId: string
+  messageId: string,
 ): Promise<void> {
   const configService = ConfigService.getInstance();
   const summaryConfig = configService.getConfig().summary;
 
   const modal = new ModalBuilder()
     .setCustomId(`summary_custom_count_${messageId}`)
-    .setTitle('自定义消息数量');
+    .setTitle("自定义消息数量");
 
   const countInput = new TextInputBuilder()
-    .setCustomId('message_count')
-    .setLabel('消息数量')
+    .setCustomId("message_count")
+    .setLabel("消息数量")
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder(`请输入 ${summaryConfig?.minMessages || 3} 到 ${summaryConfig?.maxMessages || 50} 之间的数字`)
+    .setPlaceholder(
+      `请输入 ${summaryConfig?.minMessages || 3} 到 ${summaryConfig?.maxMessages || 50} 之间的数字`,
+    )
     .setMinLength(1)
     .setMaxLength(2)
     .setRequired(true);
 
-  const row = new ActionRowBuilder<TextInputBuilder>().addComponents(countInput);
+  const row = new ActionRowBuilder<TextInputBuilder>().addComponents(
+    countInput,
+  );
   modal.addComponents(row);
 
   await interaction.showModal(modal);
@@ -453,21 +459,23 @@ async function showCustomCountModal(
  * 处理自定义数量Modal提交
  */
 export async function handleCustomCountModal(
-  interaction: ModalSubmitInteraction
+  interaction: ModalSubmitInteraction,
 ): Promise<void> {
   try {
     const customId = interaction.customId;
-    const messageId = customId.split('_')[3];
-    
+    const messageId = customId.split("_")[3];
+
     if (!messageId) {
       await interaction.reply({
-        content: '❌ 无效的消息ID',
-        ephemeral: true
+        content: "❌ 无效的消息ID",
+        ephemeral: true,
       });
       return;
     }
-    
-    const count = parseInt(interaction.fields.getTextInputValue('message_count'));
+
+    const count = parseInt(
+      interaction.fields.getTextInputValue("message_count"),
+    );
 
     const configService = ConfigService.getInstance();
     const summaryConfig = configService.getConfig().summary;
@@ -477,21 +485,28 @@ export async function handleCustomCountModal(
     if (isNaN(count) || count < minMessages || count > maxMessages) {
       await interaction.reply({
         content: `❌ 请输入有效的数字 (${minMessages}-${maxMessages})`,
-        ephemeral: true
+        ephemeral: true,
       });
       return;
     }
 
     // 更新配置状态
-    await updateSummaryConfigSelection(interaction, 'count', count.toString(), messageId!);
-
+    await updateSummaryConfigSelection(
+      interaction,
+      "count",
+      count.toString(),
+      messageId!,
+    );
   } catch (error) {
-    loggerService.logger.error({ err: error }, "Error handling custom count modal");
-    
+    loggerService.logger.error(
+      { err: error },
+      "Error handling custom count modal",
+    );
+
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
-        content: '❌ 处理自定义数量时发生错误',
-        ephemeral: true
+        content: "❌ 处理自定义数量时发生错误",
+        ephemeral: true,
       });
     }
   }
@@ -507,27 +522,30 @@ async function updateSummaryConfigSelection(
   interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
   configType: string,
   value: string,
-  messageId: string
+  messageId: string,
 ): Promise<void> {
   if (!interaction.channelId) {
-    throw new Error('Unable to get channel information');
+    throw new Error("Unable to get channel information");
   }
-  
+
   const stateKey = `${interaction.user.id}_${messageId}`;
-  let currentState = configStates.get(stateKey) || { messageId, channelId: interaction.channelId };
+  let currentState = configStates.get(stateKey) || {
+    messageId,
+    channelId: interaction.channelId,
+  };
 
   // 更新配置
   switch (configType) {
-    case 'count':
-      currentState.count = value.startsWith('preset_') ? 
-        parseInt(value.replace('preset_', '')) : 
-        parseInt(value);
+    case "count":
+      currentState.count = value.startsWith("preset_")
+        ? parseInt(value.replace("preset_", ""))
+        : parseInt(value);
       break;
-    case 'direction':
-      currentState.direction = value as 'forward' | 'backward' | 'around';
+    case "direction":
+      currentState.direction = value as "forward" | "backward" | "around";
       break;
-    case 'mode':
-      currentState.sendMode = value as 'public' | 'private';
+    case "mode":
+      currentState.sendMode = value as "public" | "private";
       break;
   }
 
@@ -542,7 +560,7 @@ async function updateSummaryConfigSelection(
  */
 async function executeSummaryWithLoading(
   interaction: ButtonInteraction,
-  config: SummaryConfig
+  config: SummaryConfig,
 ): Promise<void> {
   try {
     const channel = interaction.channel as TextChannel;
@@ -553,48 +571,52 @@ async function executeSummaryWithLoading(
       channel,
       config.messageId,
       config,
-      interaction.user
+      interaction.user,
     );
 
     // 创建总结结果嵌入
     const resultEmbed = new EmbedBuilder()
-      .setTitle('📊 Chat Summary')
+      .setTitle("📊 Chat Summary")
       .setDescription(result.summary)
       .addFields(
-        { name: '👤 Requested by', value: `${interaction.user}`, inline: true },
-        { name: '📊 Message Count', value: `${result.messageCount} messages`, inline: true },
-        { name: '📈 Direction', value: result.direction, inline: true },
-        { 
-          name: '📌 Message Range', 
-          value: `[Start Message](${result.messageRange.startMessage.url}) → [End Message](${result.messageRange.endMessage.url})\n` +
-                 `<t:${Math.floor(result.messageRange.startMessage.timestamp.getTime() / 1000)}:f> to <t:${Math.floor(result.messageRange.endMessage.timestamp.getTime() / 1000)}:f>`,
-          inline: false 
-        }
+        { name: "👤 Requested by", value: `${interaction.user}`, inline: true },
+        {
+          name: "📊 Message Count",
+          value: `${result.messageCount} messages`,
+          inline: true,
+        },
+        { name: "📈 Direction", value: result.direction, inline: true },
+        {
+          name: "📌 Message Range",
+          value:
+            `[Start Message](${result.messageRange.startMessage.url}) → [End Message](${result.messageRange.endMessage.url})\n` +
+            `<t:${Math.floor(result.messageRange.startMessage.timestamp.getTime() / 1000)}:f> to <t:${Math.floor(result.messageRange.endMessage.timestamp.getTime() / 1000)}:f>`,
+          inline: false,
+        },
       )
       .setColor(0x2ecc71)
       .setTimestamp()
       .setFooter({ text: `Summary ID: ${result.requestId}` });
 
     // 根据发送模式发送结果
-    if (config.sendMode === 'public') {
+    if (config.sendMode === "public") {
       // 公开发送到频道
       await channel.send({ embeds: [resultEmbed] });
-      
+
       // 更新交互回复
       await interaction.editReply({
-        content: '✅ Summary has been sent to the channel!',
+        content: "✅ Summary has been sent to the channel!",
         embeds: [],
-        components: []
+        components: [],
       });
     } else {
       // 私人发送，只有发起者可见
       await interaction.editReply({
-        content: '✅ Summary generated successfully!',
+        content: "✅ Summary generated successfully!",
         embeds: [resultEmbed],
-        components: []
+        components: [],
       });
     }
-
   } catch (error) {
     loggerService.logger.error(
       {
@@ -606,13 +628,16 @@ async function executeSummaryWithLoading(
       },
       "Error executing summary with loading",
     );
-    
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred while generating summary';
-    
+
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Unknown error occurred while generating summary";
+
     await interaction.editReply({
       content: `❌ ${errorMessage}`,
       embeds: [],
-      components: []
+      components: [],
     });
   }
 }
@@ -623,40 +648,42 @@ async function executeSummaryWithLoading(
 async function updateConfigInterfaceWithButtons(
   interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
   config: Partial<SummaryConfig>,
-  messageId: string
+  messageId: string,
 ): Promise<void> {
-  const checkMark = '✅';
-  const pendingMark = '⏳';
+  const checkMark = "✅";
+  const pendingMark = "⏳";
 
   const statusText = [
-    `${config.count ? checkMark : pendingMark} Message Count: ${config.count ? `${config.count} messages` : 'Not set'}`,
-    `${config.direction ? checkMark : pendingMark} Direction: ${config.direction ? getDirectionName(config.direction) : 'Not set'}`,
-    `${config.sendMode ? checkMark : pendingMark} Visibility: ${config.sendMode ? getSendModeName(config.sendMode) : 'Not set'}`
-  ].join('\n');
+    `${config.count ? checkMark : pendingMark} Message Count: ${config.count ? `${config.count} messages` : "Not set"}`,
+    `${config.direction ? checkMark : pendingMark} Direction: ${config.direction ? getDirectionName(config.direction) : "Not set"}`,
+    `${config.sendMode ? checkMark : pendingMark} Visibility: ${config.sendMode ? getSendModeName(config.sendMode) : "Not set"}`,
+  ].join("\n");
 
   const allSelected = config.count && config.direction && config.sendMode;
-  
+
   // 重建按钮，确认按钮根据完成状态启用/禁用
   const confirmButton = new ButtonBuilder()
     .setCustomId(`summary_confirm_${messageId}`)
-    .setLabel('Generate Summary')
+    .setLabel("Generate Summary")
     .setStyle(ButtonStyle.Primary)
-    .setEmoji('✅')
+    .setEmoji("✅")
     .setDisabled(!allSelected);
 
   const cancelButton = new ButtonBuilder()
     .setCustomId(`summary_cancel_${messageId}`)
-    .setLabel('Cancel')
+    .setLabel("Cancel")
     .setStyle(ButtonStyle.Secondary)
-    .setEmoji('❌');
+    .setEmoji("❌");
 
   const embed = new EmbedBuilder()
-    .setTitle('📊 Message Summary Configuration')
-    .setDescription('Current configuration status:\n\n' + statusText)
+    .setTitle("📊 Message Summary Configuration")
+    .setDescription("Current configuration status:\n\n" + statusText)
     .setColor(allSelected ? 0x2ecc71 : 0xf39c12)
-    .setFooter({ text: allSelected ? 
-      'All options selected! Click "Generate Summary" to proceed.' : 
-      'Please complete all configuration options above.' });
+    .setFooter({
+      text: allSelected
+        ? 'All options selected! Click "Generate Summary" to proceed.'
+        : "Please complete all configuration options above.",
+    });
 
   // 获取全局配置用于重建组件
   const configService = ConfigService.getInstance();
@@ -667,81 +694,112 @@ async function updateConfigInterfaceWithButtons(
   const components = [];
 
   // 消息数量选择器（始终显示）
-  const presetOptions = (effectiveConfig?.presetCounts || [5, 10, 15, 20]).map((count: number) => ({
-    label: `${count} messages${config.count === count ? ' ✅' : ''}`,
-    value: `preset_${count}`,
-    description: `Summarize ${count} messages`,
-    emoji: '📊'
-  }));
+  const presetOptions = (effectiveConfig?.presetCounts || [5, 10, 15, 20]).map(
+    (count: number) => ({
+      label: `${count} messages${config.count === count ? " ✅" : ""}`,
+      value: `preset_${count}`,
+      description: `Summarize ${count} messages`,
+      emoji: "📊",
+    }),
+  );
 
   presetOptions.push({
-    label: `🔧 Custom Count${config.count && !effectiveConfig?.presetCounts?.includes(config.count) ? ' ✅' : ''}`,
-    value: 'custom',
+    label: `🔧 Custom Count${config.count && !effectiveConfig?.presetCounts?.includes(config.count) ? " ✅" : ""}`,
+    value: "custom",
     description: `Custom message count (${effectiveConfig?.minMessages || 3}-${effectiveConfig?.maxMessages || 50} messages)`,
-    emoji: '⚙️'
+    emoji: "⚙️",
   });
 
   const countSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`summary_count_${messageId}`)
-    .setPlaceholder(config.count ? `Current: ${config.count} messages` : 'Select number of messages to summarize...')
+    .setPlaceholder(
+      config.count
+        ? `Current: ${config.count} messages`
+        : "Select number of messages to summarize...",
+    )
     .addOptions(presetOptions);
 
-  components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(countSelectMenu));
+  components.push(
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      countSelectMenu,
+    ),
+  );
 
   // 方向选择器（始终显示）
   const directionSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`summary_direction_${messageId}`)
-    .setPlaceholder(config.direction ? `Current: ${getDirectionName(config.direction)}` : 'Select summary direction...')
+    .setPlaceholder(
+      config.direction
+        ? `Current: ${getDirectionName(config.direction)}`
+        : "Select summary direction...",
+    )
     .addOptions([
       {
-        label: `📈 Later${config.direction === 'forward' ? ' ✅' : ''}`,
-        value: 'forward',
-        description: 'Summarize messages after this message',
-        emoji: '📈'
+        label: `📈 Later${config.direction === "forward" ? " ✅" : ""}`,
+        value: "forward",
+        description: "Summarize messages after this message",
+        emoji: "📈",
       },
       {
-        label: `📉 Earlier${config.direction === 'backward' ? ' ✅' : ''}`, 
-        value: 'backward',
-        description: 'Summarize messages before this message',
-        emoji: '📉'
+        label: `📉 Earlier${config.direction === "backward" ? " ✅" : ""}`,
+        value: "backward",
+        description: "Summarize messages before this message",
+        emoji: "📉",
       },
       {
-        label: `🎯 Around${config.direction === 'around' ? ' ✅' : ''}`,
-        value: 'around',
-        description: 'Summarize messages around this message',
-        emoji: '🎯'
-      }
+        label: `🎯 Around${config.direction === "around" ? " ✅" : ""}`,
+        value: "around",
+        description: "Summarize messages around this message",
+        emoji: "🎯",
+      },
     ]);
 
-  components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(directionSelectMenu));
+  components.push(
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      directionSelectMenu,
+    ),
+  );
 
   // 发送模式选择器（始终显示）
   const sendModeSelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`summary_mode_${messageId}`)
-    .setPlaceholder(config.sendMode ? `Current: ${getSendModeName(config.sendMode)}` : 'Select visibility mode...')
+    .setPlaceholder(
+      config.sendMode
+        ? `Current: ${getSendModeName(config.sendMode)}`
+        : "Select visibility mode...",
+    )
     .addOptions([
       {
-        label: `🌍 Public${config.sendMode === 'public' ? ' ✅' : ''}`,
-        value: 'public',
-        description: 'Send summary to channel (visible to everyone)',
-        emoji: '🌍'
+        label: `🌍 Public${config.sendMode === "public" ? " ✅" : ""}`,
+        value: "public",
+        description: "Send summary to channel (visible to everyone)",
+        emoji: "🌍",
       },
       {
-        label: `🔒 Private${config.sendMode === 'private' ? ' ✅' : ''}`,
-        value: 'private', 
-        description: 'Send summary privately (only you can see)',
-        emoji: '🔒'
-      }
+        label: `🔒 Private${config.sendMode === "private" ? " ✅" : ""}`,
+        value: "private",
+        description: "Send summary privately (only you can see)",
+        emoji: "🔒",
+      },
     ]);
 
-  components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sendModeSelectMenu));
+  components.push(
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      sendModeSelectMenu,
+    ),
+  );
 
   // 总是添加按钮行
-  components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(confirmButton, cancelButton));
+  components.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      confirmButton,
+      cancelButton,
+    ),
+  );
 
   const updateData = {
     embeds: [embed],
-    components: components
+    components: components,
   };
 
   // 根据交互类型选择合适的更新方法
@@ -758,7 +816,7 @@ async function updateConfigInterfaceWithButtons(
     } else {
       await interaction.reply({
         ...updateData,
-        ephemeral: true
+        ephemeral: true,
       });
     }
   }
@@ -769,9 +827,9 @@ async function updateConfigInterfaceWithButtons(
  */
 function getDirectionName(direction: string): string {
   const names = {
-    forward: '📈 Later',
-    backward: '📉 Earlier', 
-    around: '🎯 Around'
+    forward: "📈 Later",
+    backward: "📉 Earlier",
+    around: "🎯 Around",
   };
   return names[direction as keyof typeof names] || direction;
 }
@@ -781,8 +839,8 @@ function getDirectionName(direction: string): string {
  */
 function getSendModeName(sendMode: string): string {
   const names = {
-    public: '🌍 Public',
-    private: '🔒 Private'
+    public: "🌍 Public",
+    private: "🔒 Private",
   };
   return names[sendMode as keyof typeof names] || sendMode;
-} 
+}

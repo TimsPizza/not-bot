@@ -172,6 +172,47 @@ if (personaChoices.length === 0) {
                 .setDescription("Channel to configure (optional)")
                 .setRequired(false),
             ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("summary")
+            .setDescription("Enable or disable the summary feature")
+            .addBooleanOption((option) =>
+              option
+                .setName("enabled")
+                .setDescription("Whether to enable summaries")
+                .setRequired(true),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("context")
+            .setDescription("Set additional context length (max 50 messages)")
+            .addIntegerOption((option) =>
+              option
+                .setName("messages")
+                .setDescription(
+                  "Number of recent messages to keep in context (1-50)",
+                )
+                .setRequired(true)
+                .setMinValue(1)
+                .setMaxValue(50),
+            ),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("completion_delay")
+            .setDescription(
+              "Set wait time before sending completion requests (seconds)",
+            )
+            .addIntegerOption((option) =>
+              option
+                .setName("seconds")
+                .setDescription("Delay before requesting LLM completion (>= 3)")
+                .setRequired(true)
+                .setMinValue(3)
+                .setMaxValue(120),
+            ),
         ),
     ];
 

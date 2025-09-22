@@ -17,6 +17,7 @@ import {
   ScoreDecision,
   SimpleMessage,
   StructuredResponseSegment,
+  ServerConfig,
 } from "@/types";
 import {
   CacheType, // Added
@@ -186,6 +187,8 @@ class BotClient {
       `Processing batch of ${messages.length} messages for channel ${channelId}`,
     );
 
+    let activeServerConfig: ServerConfig | null = null;
+
     // 1. Score Messages Individually
     // Note: scorerService.scoreMessages might internally use context now if needed by rules
     const scoringResults = scorerService.scoreMessages(channelId, messages);
@@ -245,6 +248,7 @@ class BotClient {
           const serverConfig = configService.getServerConfig(
             firstMessage.guildId ?? firstMessage.channelId, // DMs don't have a guildId, so use the channelId
           );
+          activeServerConfig = serverConfig;
           responsiveness = serverConfig.responsiveness;
         } else {
           loggerService.logger.warn(
@@ -364,9 +368,9 @@ class BotClient {
         personaDetails = personaDefinition?.details; // Get details from the resolved persona
 
         // Get language configuration
-        const serverConfig = configService.getServerConfig(serverId);
-        if (serverConfig.languageConfig) {
-          languageConfig = serverConfig.languageConfig;
+        activeServerConfig = configService.getServerConfig(serverId);
+        if (activeServerConfig.languageConfig) {
+          languageConfig = activeServerConfig.languageConfig;
         } else {
           // Use default from global config
           const globalConfig = configService.getConfig();
@@ -418,6 +422,24 @@ class BotClient {
           loggerService.logger.warn(
             `Failed to send typing indicator to channel ${channelId}: ${typingError}`,
           );
+        }
+
+        const configuredDelaySeconds =
+          activeServerConfig?.completionDelaySeconds ?? 3;
+        const completionDelaySeconds = Math.max(3, configuredDelaySeconds);
+        if (completionDelaySeconds > 0) {
+          await this.delay(completionDelaySeconds * 1000);
+          // Refresh typing indicator so the user sees continued activity.
+          try {
+            const channel = await this.client.channels.fetch(channelId);
+            if (channel instanceof TextChannel) {
+              await channel.sendTyping();
+            }
+          } catch (typingError) {
+            loggerService.logger.warn(
+              `Failed to refresh typing indicator after delay in channel ${channelId}: ${typingError}`,
+            );
+          }
         }
 
         // Pass the specific target message, template, details, and language config to the responder

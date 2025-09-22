@@ -230,8 +230,9 @@ class ConfigService {
       loadedConfig = ensureServerConfigInDb(serverId);
     }
 
-    this.serverConfigs.set(serverId, loadedConfig);
-    return loadedConfig;
+    const normalized = this.normalizeServerConfigValues(loadedConfig);
+    this.serverConfigs.set(serverId, normalized);
+    return normalized;
   }
 
   /**
@@ -242,8 +243,9 @@ class ConfigService {
   public async saveServerConfig(serverConfig: ServerConfig): Promise<boolean> {
     this.ensureDataStore();
     try {
-      persistServerConfig(serverConfig);
-      this.serverConfigs.set(serverConfig.serverId, serverConfig);
+      const normalized = this.normalizeServerConfigValues(serverConfig);
+      persistServerConfig(normalized);
+      this.serverConfigs.set(serverConfig.serverId, normalized);
       loggerService.logger.info(
         `Persisted server config for ${serverConfig.serverId} through SQLite store.`,
       );
@@ -791,6 +793,87 @@ class ConfigService {
     }
     initializeDataStore(this.serverDataPath);
     this.dataStoreInitialized = true;
+  }
+
+  private normalizeServerConfigValues(config: ServerConfig): ServerConfig {
+    const normalized = config;
+
+    if (!normalized.summarySettings) {
+      normalized.summarySettings = {
+        enabled: false,
+        maxMessagesPerSummary: 50,
+        cooldownSeconds: 0,
+        allowedRoles: [],
+        bannedChannels: [],
+      };
+    } else {
+      normalized.summarySettings.enabled = Boolean(
+        normalized.summarySettings.enabled,
+      );
+      normalized.summarySettings.maxMessagesPerSummary = Math.max(
+        1,
+        Math.min(
+          200,
+          Math.round(normalized.summarySettings.maxMessagesPerSummary ?? 50),
+        ),
+      );
+      normalized.summarySettings.cooldownSeconds = Math.max(
+        0,
+        Math.round(normalized.summarySettings.cooldownSeconds ?? 0),
+      );
+      normalized.summarySettings.allowedRoles = Array.isArray(
+        normalized.summarySettings.allowedRoles,
+      )
+        ? normalized.summarySettings.allowedRoles
+        : [];
+      normalized.summarySettings.bannedChannels = Array.isArray(
+        normalized.summarySettings.bannedChannels,
+      )
+        ? normalized.summarySettings.bannedChannels
+        : [];
+    }
+
+    if (!normalized.channelConfig) {
+      normalized.channelConfig = {
+        allowedChannels: [],
+        mode: "whitelist",
+        autoManage: false,
+      };
+    } else {
+      normalized.channelConfig.allowedChannels = Array.isArray(
+        normalized.channelConfig.allowedChannels,
+      )
+        ? normalized.channelConfig.allowedChannels
+        : [];
+      normalized.channelConfig.mode =
+        normalized.channelConfig.mode === "blacklist" ? "blacklist" : "whitelist";
+      normalized.channelConfig.autoManage = Boolean(
+        normalized.channelConfig.autoManage,
+      );
+    }
+
+    if (
+      !Array.isArray(normalized.allowedChannels) ||
+      normalized.allowedChannels.length === 0
+    ) {
+      normalized.allowedChannels = null;
+    }
+
+    if (normalized.maxContextMessages === undefined) {
+      delete normalized.maxContextMessages;
+    } else {
+      normalized.maxContextMessages = Math.min(
+        50,
+        Math.max(1, Math.round(normalized.maxContextMessages)),
+      );
+    }
+
+    normalized.completionDelaySeconds = Math.min(
+      120,
+      Math.max(3, Math.round(normalized.completionDelaySeconds ?? 3)),
+    );
+
+    return normalized;
   }
 }
 

@@ -20,6 +20,12 @@ export const servers = sqliteTable("servers", {
     .default(true),
   maxContextMessages: integer("max_context_messages", { mode: "number" }),
   maxDailyResponses: integer("max_daily_responses", { mode: "number" }),
+  completionDelaySeconds: integer(
+    "completion_delay_seconds",
+    { mode: "number" },
+  )
+    .notNull()
+    .default(3),
   channelMode: text("channel_mode").notNull().default("whitelist"),
   channelAutoManage: integer("channel_auto_manage", { mode: "boolean" })
     .notNull()
