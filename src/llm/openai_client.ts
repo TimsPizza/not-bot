@@ -59,6 +59,7 @@ export async function callChatCompletionApi(
       messages: messages,
       temperature: temperature,
       max_tokens: maxTokens,
+      stream: false, // disable streaming, this may prevent model from returning BOS string
     });
 
     // 确保响应中有选项并且第一个选项有内容

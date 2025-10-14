@@ -256,6 +256,8 @@ class ResponderService {
       cleaned = cleaned.replace(/^```(?:json)?/i, "");
       cleaned = cleaned.replace(/```$/i, "");
     }
+    // fuck it, jsonrepair cannot cleanup this
+    cleaned = cleaned.replace("<｜begin▁of▁sentence｜>", "");
 
     let parsed: unknown;
     try {
