@@ -5,7 +5,7 @@ import loggerService from "@/logger";
 import { AppConfig, SimpleMessage, StructuredResponseSegment } from "@/types";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { callChatCompletionApi } from "./openai_client";
-
+import { jsonrepair } from "jsonrepair";
 /**
  * @description Convert SimpleMessage array to OpenAI chat completion format
  * Each user message becomes a 'user' role message with username in content
@@ -259,6 +259,8 @@ class ResponderService {
 
     let parsed: unknown;
     try {
+      // maybe need to remove BOS
+      cleaned = jsonrepair(cleaned);
       parsed = JSON.parse(cleaned);
     } catch (error) {
       loggerService.logger.warn(

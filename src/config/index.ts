@@ -103,7 +103,7 @@ class ConfigService {
    * @description Gets a specific loaded preset persona by its ID.
    * @param presetId The ID of the preset persona (filename without extension).
    * @returns {PersonaDefinition | undefined} The persona definition or undefined if not found.
-  */
+   */
   public getPresetPersona(presetId: string): PersonaDefinition | undefined {
     const cached = this.presetPersonas.get(presetId);
     if (cached) {
@@ -345,9 +345,15 @@ class ConfigService {
         const personaId = path.basename(file, ".json");
         try {
           const fileContent = fs.readFileSync(filePath, "utf-8");
-          const personaData = JSON.parse(fileContent) as Partial<PersonaDefinition>;
+          const personaData = JSON.parse(
+            fileContent,
+          ) as Partial<PersonaDefinition>;
 
-          if (personaData.name && personaData.description && personaData.details) {
+          if (
+            personaData.name &&
+            personaData.description &&
+            personaData.details
+          ) {
             const finalId =
               personaData.id && personaData.id !== personaId
                 ? personaData.id
@@ -583,7 +589,7 @@ class ConfigService {
           configFromFile.scoringRulesFile,
         // serverDataPath is loaded directly from env var in constructor
         serverDataPath: this.serverDataPath, // Include the path loaded from env/default
-        
+
         // 新增字段：直接从YAML配置文件复制
         language: configFromFile.language,
         summary: configFromFile.summary,
@@ -846,7 +852,9 @@ class ConfigService {
         ? normalized.channelConfig.allowedChannels
         : [];
       normalized.channelConfig.mode =
-        normalized.channelConfig.mode === "blacklist" ? "blacklist" : "whitelist";
+        normalized.channelConfig.mode === "blacklist"
+          ? "blacklist"
+          : "whitelist";
       normalized.channelConfig.autoManage = Boolean(
         normalized.channelConfig.autoManage,
       );
