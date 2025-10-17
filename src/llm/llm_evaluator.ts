@@ -1,52 +1,9 @@
 // src/llm/llm_evaluator.ts
 import loggerService from "@/logger";
 import configService from "@/config";
-import {
-  SimpleMessage,
-  LLMEvaluationResult,
-  PersonaPrompts,
-  AppConfig,
-} from "@/types";
-import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { SimpleMessage, LLMEvaluationResult, AppConfig } from "@/types";
 import { callChatCompletionApi } from "./openai_client";
-
-/**
- * @description Convert messages to a format suitable for evaluation.
- * Combines recent context and the current batch for LLM evaluation.
- */
-function formatMessagesForEvaluation(
-  channelContextMessages: SimpleMessage[],
-  batchMessages: SimpleMessage[],
-  evaluationPrompt: string,
-  contextLookback: number = 10, // How many recent context messages to include
-): ChatCompletionMessageParam[] {
-  // Start with the evaluation prompt as system message
-  const result: ChatCompletionMessageParam[] = [
-    { role: "system", content: evaluationPrompt },
-  ];
-
-  // Combine recent context and the current batch
-  const recentContext = channelContextMessages.slice(-contextLookback);
-  const messagesToEvaluate = [...recentContext, ...batchMessages];
-
-  // Add a user message containing the combined messages in a clear format
-  // We send the combined list for the LLM to understand the flow.
-  const formattedMessages = messagesToEvaluate.map((msg) => ({
-    id: msg.id,
-    author: msg.authorUsername,
-    content: msg.content,
-    timestamp: new Date(msg.timestamp).toISOString(),
-    hasBeenRepliedTo: msg.respondedTo || false,
-  }));
-
-  result.push({
-    role: "user",
-    // Update prompt instruction slightly
-    content: `${JSON.stringify(formattedMessages, null, 2)}`,
-  });
-
-  return result;
-}
+import { PromptBuilder } from "@/prompt";
 
 class LLMEvaluatorService {
   private static instance: LLMEvaluatorService;
@@ -120,40 +77,36 @@ class LLMEvaluatorService {
     }
 
     try {
-      // Inject persona details into the evaluation prompt template.
-      // Assumes the template contains a placeholder like {{PERSONA_DETAILS}}.
-      // A more robust templating engine could be used if needed.
-      const finalEvaluationPrompt = evaluationPromptTemplate.replace(
-        /\{\{PERSONA_DETAILS\}\}/g, // Simple placeholder replacement
+      const prompt = PromptBuilder.build({
+        useCase: "evaluation",
+        evaluationPromptTemplate,
         personaDetails,
-      );
-      // Log a warning if the placeholder wasn't found, as it might indicate a template issue
+        channelContextMessages,
+        batchMessages,
+      });
+
+      const firstMessageContent = prompt.messages[0]?.content;
       if (
-        !finalEvaluationPrompt.includes(personaDetails) &&
-        evaluationPromptTemplate.includes("{{PERSONA_DETAILS}}")
+        typeof firstMessageContent === "string" &&
+        evaluationPromptTemplate.includes("{{PERSONA_DETAILS}}") &&
+        !firstMessageContent.includes(personaDetails)
       ) {
         loggerService.logger.warn(
           "Persona details placeholder '{{PERSONA_DETAILS}}' found in evaluation prompt template, but replacement might have failed.",
         );
       }
 
-      // Prepare messages in OpenAI chat completion format, including context
-      const chatMessages = formatMessagesForEvaluation(
-        channelContextMessages, // Pass context
-        batchMessages, // Pass batch
-        finalEvaluationPrompt, // Use the prompt with injected persona details
-      );
       loggerService.logger.debug(
-        `Sending ${chatMessages.length} message parts (system + user with combined context/batch) to LLM Evaluator using effective threshold ${effectiveThreshold.toFixed(2)}.`,
+        `Sending ${prompt.messages.length} message parts (system + user with combined context/batch) to LLM Evaluator using effective threshold ${effectiveThreshold.toFixed(2)}.`,
       );
 
       // Call the API using the eval client (for message evaluation)
       const rawContent = await callChatCompletionApi(
         "eval",
         this.config.secondaryLlmModel,
-        chatMessages,
-        0.2, // Lower temperature for more consistent evaluation
-        200, // Enough tokens for evaluation result
+        prompt.messages,
+        prompt.temperature,
+        prompt.maxTokens,
       );
 
       if (!rawContent) {

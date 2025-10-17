@@ -141,6 +141,9 @@ summary_prompts:
     4. 重点关注有价值的讨论内容
     5. 忽略无关的闲聊或系统消息
     6. 如果涉及敏感内容，请谨慎处理
+    7. **重要** 在总结中提到具体用户时，请使用提供的Discord mention格式（如<@123456789>）
+
+    {{language_instruction}}
 
     **聊天记录：**
     {{messages_content}}

@@ -16,6 +16,7 @@ import {
 import { ConfigService } from '../config';
 import { callChatCompletionApi } from '../llm/openai_client';
 import loggerService from '../logger';
+import { PromptBuilder } from "@/prompt";
 
 export class MessageSummarizer {
   private static instance: MessageSummarizer;
@@ -373,31 +374,46 @@ export class MessageSummarizer {
     languageConfig: any,
     messageBatch: MessageBatch
   ): Promise<string> {
-    // 确定目标语言
-    let targetLanguage = 'auto';
-    if (languageConfig?.primary && languageConfig.primary !== SupportedLanguage.Auto) {
-      targetLanguage = this.getLanguageDisplayName(languageConfig.primary);
+    const personaPrompts = this.configService.getPersonaPrompts();
+    const summaryPromptTemplate =
+      personaPrompts?.summary_prompts?.basic_summary ?? null;
+
+    let targetLanguageName = "根据聊天内容自动选择最合适的语言";
+    const primaryLanguageCode: string =
+      languageConfig?.primary ?? SupportedLanguage.Auto;
+    if (
+      languageConfig?.primary &&
+      languageConfig.primary !== SupportedLanguage.Auto
+    ) {
+      targetLanguageName = this.getLanguageDisplayName(
+        languageConfig.primary,
+      );
     }
 
-    // 构建提示词 - 使用简化的提示词生成
-  const summaryPrompt = this.buildSummaryPrompt(
+    const userMappingText = this.buildUserMappingText(messageBatch);
+    const timeRange = this.formatTimeRange(messageBatch);
+
+    const prompt = PromptBuilder.build({
+      useCase: "summary",
+      summaryPromptTemplate,
+      personaPrompts,
+      summaryConfig: config,
       formattedMessages,
-      config,
-      targetLanguage,
-      messageBatch
-    );
+      userMappingText,
+      messageBatch,
+      targetLanguageName,
+      primaryLanguageCode,
+      timeRange,
+    });
 
     try {
       const globalConfig = this.configService.getConfig();
       const response = await callChatCompletionApi(
         'main',
         globalConfig.primaryLlmModel,
-        [
-          { role: 'system', content: '你是一个专业的聊天记录总结助手。请根据用户指定的语言和要求，提供清晰、有用的聊天记录总结。' },
-          { role: 'user', content: summaryPrompt }
-        ],
-        0.95,
-        1500
+        prompt.messages,
+        prompt.temperature,
+        prompt.maxTokens
       );
       
       if (!response) {
@@ -411,69 +427,15 @@ export class MessageSummarizer {
     }
   }
 
-  /**
-   * 构建总结提示词
-   */
-  private buildSummaryPrompt(
-    formattedMessages: string,
-    config: SummaryConfig,
-    targetLanguage: string,
-    messageBatch: MessageBatch
-  ): string {
-    const directionText = this.getDirectionDescription(config.direction);
-    const timeRange = this.formatTimeRange(messageBatch);
-    
-    // 构建用户映射表（用户名 -> Discord mention格式）
+  private buildUserMappingText(messageBatch: MessageBatch): string {
     const userMap = new Map<string, string>();
-    messageBatch.messages.forEach(message => {
+    messageBatch.messages.forEach((message) => {
       userMap.set(message.authorUsername, `<@${message.authorId}>`);
     });
-    
-    const userMappingText = Array.from(userMap.entries())
+
+    return Array.from(userMap.entries())
       .map(([username, mention]) => `${username} -> ${mention}`)
       .join('\n');
-    
-    return `请分析以下Discord频道的聊天记录，并提供一个清晰、有用的总结。
-
-**总结要求：**
-1. 使用语言：${targetLanguage === 'auto' ? '根据聊天内容自动选择最合适的语言' : targetLanguage}
-2. 提取主要话题和关键信息
-3. 保持客观中性的语调
-4. 重点关注有价值的讨论内容
-5. 忽略无关的闲聊或系统消息
-6. 如果涉及敏感内容，请谨慎处理
-7. **重要：在总结中提到用户时，必须使用Discord mention格式，不要使用用户名或用户ID**
-
-**用户映射表（用于在总结中正确引用用户）：**
-${userMappingText}
-
-**聊天记录信息：**
-- 总结方向：${directionText}
-- 消息数量：${messageBatch.totalCount}条
-- 时间范围：${timeRange}
-
-**聊天记录：**
-${formattedMessages}
-
-请提供一个结构化的总结，包含：
-- 📋 主要话题
-- 💬 关键讨论点  
-- 🎯 重要结论或决定
-- 📌 需要关注的事项（如有）
-
-**注意：当在总结中提到具体用户时，请使用上述用户映射表中的Discord mention格式（如<@123456789>），这样用户名会在Discord中显示为可点击的蓝色链接。**`;
-  }
-
-  /**
-   * 获取总结方向的描述
-   */
-  private getDirectionDescription(direction: string): string {
-    const descriptions = {
-      forward: 'Summarize the conversation that followed the specified message',
-      backward: 'Summarize the conversation that preceded the specified message',
-      around: 'Summarize the complete discussion process around the specified message'
-    };
-    return descriptions[direction as keyof typeof descriptions] || direction;
   }
 
   /**
