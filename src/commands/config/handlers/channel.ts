@@ -1,6 +1,7 @@
 import type { Channel } from "discord.js";
 import { ChannelType } from "discord.js";
 import configService from "@/config";
+import loggerService from "@/logger";
 import type { ConfigCommandContext } from "../types";
 
 export async function handleChannelSubcommand(
@@ -21,8 +22,21 @@ export async function handleChannelSubcommand(
   }
 
   const channelId = channelToConfig.id;
+  const allowedBefore = serverConfig.allowedChannels
+    ? [...serverConfig.allowedChannels]
+    : [];
   let allowed = serverConfig.allowedChannels || [];
   let message: string;
+
+  loggerService.logger.debug(
+    {
+      guildId: serverConfig.serverId,
+      requestedAction: action,
+      targetChannel: channelId,
+      allowedBefore,
+    },
+    "Handling config channel subcommand.",
+  );
 
   switch (action) {
     case "enable":
@@ -56,6 +70,23 @@ export async function handleChannelSubcommand(
   }
 
   serverConfig.allowedChannels = allowed.length > 0 ? allowed : null;
+  loggerService.logger.debug(
+    {
+      guildId: serverConfig.serverId,
+      targetChannel: channelId,
+      allowedAfter: serverConfig.allowedChannels,
+    },
+    "Persisting allowed channel configuration.",
+  );
   const success = await configService.saveServerConfig(serverConfig);
+  loggerService.logger.info(
+    {
+      guildId: serverConfig.serverId,
+      targetChannel: channelId,
+      persistedAllowedChannels: serverConfig.allowedChannels,
+      saveSucceeded: success,
+    },
+    "Completed config channel subcommand.",
+  );
   await interaction.editReply(success ? message : "Failed to save configuration.");
 }

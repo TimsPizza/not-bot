@@ -115,6 +115,14 @@ class BotClient {
     // --- Server-Specific Configuration Check ---
     if (message.guildId) {
       const serverConfig = configService.getServerConfig(message.guildId);
+      loggerService.logger.debug(
+        {
+          guildId: message.guildId,
+          channelId: message.channelId,
+          allowedChannels: serverConfig.allowedChannels,
+        },
+        "Evaluating allowed channel configuration for incoming message.",
+      );
       if (
         serverConfig.allowedChannels &&
         serverConfig.allowedChannels.length > 0 &&

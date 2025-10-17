@@ -5,6 +5,7 @@ export async function handleViewSubcommand(
   context: ConfigCommandContext,
 ): Promise<void> {
   const { interaction, serverConfig } = context;
+  console.log(`Viewing config for server: ${serverConfig.serverId}: ${serverConfig}` );
 
   const allowed = serverConfig.allowedChannels
     ? serverConfig.allowedChannels.map((id) => `<#${id}>`).join(", ")
