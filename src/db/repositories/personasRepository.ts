@@ -105,7 +105,28 @@ export function deleteCustomPersona(serverId: string, personaId: string): void {
 }
 
 export function bulkUpsertBuiltins(personasList: PersonaDefinition[]): void {
-  for (const persona of personasList) {
-    upsertPersona(persona, "builtin", null, true);
-  }
+  const db = getDb();
+  const now = Date.now();
+
+  db.transaction((tx) => {
+    tx.delete(personas).where(eq(personas.scope, "builtin")).run();
+
+    if (!personasList.length) {
+      return;
+    }
+
+    const values = personasList.map((persona) => ({
+      personaId: persona.id,
+      scope: "builtin" as const,
+      serverId: null,
+      name: persona.name,
+      description: persona.description,
+      details: persona.details,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    tx.insert(personas).values(values).run();
+  });
 }

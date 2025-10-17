@@ -1,15 +1,16 @@
 import configService from "@/config";
+import loggerService from "@/logger";
 import type { ConfigCommandContext } from "../types";
 
 export async function handleViewSubcommand(
   context: ConfigCommandContext,
 ): Promise<void> {
   const { interaction, serverConfig } = context;
-  console.log(`Viewing config for server: ${serverConfig.serverId}: ${serverConfig}` );
+  loggerService.logger.debug(`Viewing config for server: ${serverConfig.serverId}: ${serverConfig}` );
 
   const allowed = serverConfig.allowedChannels
     ? serverConfig.allowedChannels.map((id) => `<#${id}>`).join(", ")
-    : "All Channels";
+    : "None";
 
   const defaultMapping = serverConfig.personaMappings["default"];
   let personaInfo = "Not Set";
