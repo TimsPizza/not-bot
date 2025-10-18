@@ -26,3 +26,9 @@ export {
   deleteCustomPersona,
   bulkUpsertBuiltins,
 } from "./repositories/personasRepository";
+
+export {
+  getChannelEmotion,
+  upsertChannelEmotion,
+  listTopChannelEmotions,
+} from "./repositories/emotionsRepository";

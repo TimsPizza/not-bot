@@ -1,5 +1,9 @@
+import type {
+  EmotionMetric,
+  EmotionThresholdMap,
+  PersonaDefinition,
+} from "@/types";
 import { and, eq } from "drizzle-orm";
-import type { PersonaDefinition } from "@/types";
 import { getDb } from "../client";
 import { personas } from "../schema";
 
@@ -17,6 +21,10 @@ function rowToPersona(row: typeof personas.$inferSelect): PersonaRecord {
     name: row.name,
     description: row.description,
     details: row.details,
+    emotionThresholds: parseJson<EmotionThresholdMap>(row.emotionThresholds),
+    emotionDeltaCaps: parseJson<Partial<Record<EmotionMetric, number>>>(
+      row.emotionDeltaCaps,
+    ),
     scope: (row.scope as PersonaScope) ?? "builtin",
     serverId: row.serverId ?? null,
     isActive: Boolean(row.isActive),
@@ -41,6 +49,8 @@ export function upsertPersona(
       name: definition.name,
       description: definition.description,
       details: definition.details,
+      emotionThresholds: serializeJson(definition.emotionThresholds),
+      emotionDeltaCaps: serializeJson(definition.emotionDeltaCaps),
       isActive,
       createdAt: now,
       updatedAt: now,
@@ -53,6 +63,8 @@ export function upsertPersona(
         name: definition.name,
         description: definition.description,
         details: definition.details,
+        emotionThresholds: serializeJson(definition.emotionThresholds),
+        emotionDeltaCaps: serializeJson(definition.emotionDeltaCaps),
         isActive,
         updatedAt: now,
       },
@@ -122,6 +134,8 @@ export function bulkUpsertBuiltins(personasList: PersonaDefinition[]): void {
       name: persona.name,
       description: persona.description,
       details: persona.details,
+      emotionThresholds: serializeJson(persona.emotionThresholds),
+      emotionDeltaCaps: serializeJson(persona.emotionDeltaCaps),
       isActive: true,
       createdAt: now,
       updatedAt: now,
@@ -129,4 +143,26 @@ export function bulkUpsertBuiltins(personasList: PersonaDefinition[]): void {
 
     tx.insert(personas).values(values).run();
   });
+}
+
+function serializeJson(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function parseJson<T>(value: string | null | undefined): T | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
 }

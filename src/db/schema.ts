@@ -70,6 +70,32 @@ export const channelState = sqliteTable("channel_state", {
     .default(sql`(strftime('%s','now') * 1000)`),
 });
 
+export const channelEmotions = sqliteTable(
+  "channel_emotions",
+  {
+    channelId: text("channel_id").notNull(),
+    userId: text("user_id").notNull(),
+    affinity: integer("affinity", { mode: "number" }).notNull().default(0),
+    annoyance: integer("annoyance", { mode: "number" }).notNull().default(0),
+    trust: integer("trust", { mode: "number" }).notNull().default(0),
+    curiosity: integer("curiosity", { mode: "number" }).notNull().default(0),
+    lastInteractionAt: integer("last_interaction_at", { mode: "number" })
+      .notNull()
+      .default(sql`(strftime('%s','now') * 1000)`),
+    lastDecayAt: integer("last_decay_at", { mode: "number" })
+      .notNull()
+      .default(sql`(strftime('%s','now') * 1000)`),
+    evidence: text("evidence"),
+    updatedAt: integer("updated_at", { mode: "number" })
+      .notNull()
+      .default(sql`(strftime('%s','now') * 1000)`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.channelId, table.userId] }),
+    channelIdx: index("channel_emotions_channel_idx").on(table.channelId),
+  }),
+);
+
 export const channelMessages = sqliteTable(
   "channel_messages",
   {
@@ -184,6 +210,8 @@ export const personas = sqliteTable(
     name: text("name").notNull(),
     description: text("description").notNull(),
     details: text("details").notNull(),
+    emotionThresholds: text("emotion_thresholds"),
+    emotionDeltaCaps: text("emotion_delta_caps"),
     isActive: integer("is_active", { mode: "boolean" })
       .notNull()
       .default(true),
@@ -227,4 +255,5 @@ export type ServerRow = typeof servers.$inferSelect;
 export type ChannelRow = typeof channels.$inferSelect;
 export type ChannelStateRow = typeof channelState.$inferSelect;
 export type ChannelMessageRow = typeof channelMessages.$inferSelect;
+export type ChannelEmotionRow = typeof channelEmotions.$inferSelect;
 export type PersonaRow = typeof personas.$inferSelect;

@@ -4,6 +4,8 @@ import {
   SimpleMessage,
   SummaryConfig,
   MessageBatch,
+  EmotionSnapshot,
+  EmotionMetric,
 } from "@/types";
 
 export interface ResponsePromptContext {
@@ -14,6 +16,9 @@ export interface ResponsePromptContext {
   contextMessages: SimpleMessage[];
   languageConfig?: { primary: string; fallback: string; autoDetect: boolean };
   targetMessage?: SimpleMessage;
+  targetUserId?: string;
+  emotionSnapshots?: EmotionSnapshot[];
+  emotionDeltaCaps?: Partial<Record<EmotionMetric, number>>;
 }
 
 export interface EvaluationPromptContext {
@@ -23,6 +28,7 @@ export interface EvaluationPromptContext {
   channelContextMessages: SimpleMessage[];
   batchMessages: SimpleMessage[];
   contextLookback?: number;
+  emotionSnapshots?: EmotionSnapshot[];
 }
 
 export interface SummaryPromptContext {

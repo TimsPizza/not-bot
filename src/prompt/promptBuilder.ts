@@ -1,13 +1,18 @@
+import {
+  EmotionMetric,
+  EmotionSnapshot,
+  PersonaPrompts,
+  SimpleMessage,
+} from "@/types";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { renderTemplate } from "./template";
 import {
   BuiltPrompt,
+  EvaluationPromptContext,
   PromptContext,
   ResponsePromptContext,
-  EvaluationPromptContext,
   SummaryPromptContext,
 } from "./types";
-import { renderTemplate } from "./template";
-import { SimpleMessage, PersonaPrompts } from "@/types";
 
 const RESPONSE_LANGUAGE_NAMES: Record<string, string> = {
   zh: "中文",
@@ -50,6 +55,29 @@ const DEFAULT_SUMMARY_TEMPLATE = `请分析以下Discord频道的聊天记录，
 - 🎯 重要结论或决定
 - 📌 需要关注的事项（如有）`;
 
+const RESPONSE_EMOTION_METRICS: EmotionMetric[] = [
+  "affinity",
+  "annoyance",
+  "trust",
+  "curiosity",
+];
+
+const EMOTION_BUCKET_LABELS: Record<EmotionMetric, string[]> = {
+  affinity: ["Extremely distant", "Cool", "Neutral", "Warm", "Clingy"],
+  annoyance: ["Calm", "Slightly annoyed", "Annoyed", "Irritated", "Critical"],
+  trust: ["No trust", "Doubtful", "Cautious trust", "Trusting", "Fully trusting"],
+  curiosity: ["No interest", "Mild interest", "Curious", "Very interested", "Highly engaged"],
+};
+
+const DEFAULT_THRESHOLD_FALLBACK: Record<EmotionMetric, number[]> = {
+  affinity: [-60, -20, 0, 40],
+  annoyance: [-40, -10, 10, 40],
+  trust: [-50, -15, 10, 45],
+  curiosity: [-30, -5, 20, 50],
+};
+
+const OUTPUT_DELTA_BOUND = 12;
+
 export class PromptBuilder {
   public static build(context: PromptContext): BuiltPrompt {
     switch (context.useCase) {
@@ -73,6 +101,9 @@ function buildResponsePrompt(context: ResponsePromptContext): BuiltPrompt {
     contextMessages,
     languageConfig,
     targetMessage,
+    targetUserId,
+    emotionSnapshots,
+    emotionDeltaCaps,
   } = context;
 
   const languageInstruction = determineResponseLanguageInstruction(
@@ -90,20 +121,29 @@ function buildResponsePrompt(context: ResponsePromptContext): BuiltPrompt {
   if (targetMessage) {
     messages.push({
       role: "system",
-      content: `请特别注意回应用户 ${targetMessage.authorUsername} 的消息：${targetMessage.content}`,
+      content: `Please pay special attention to replying to ${targetMessage.authorUsername}: ${targetMessage.content}`,
+    });
+  }
+
+  if (emotionSnapshots && emotionSnapshots.length > 0) {
+    messages.push({
+      role: "system",
+      content: buildEmotionGuidanceMessage(
+        emotionSnapshots,
+        targetUserId ?? targetMessage?.authorId ?? null,
+      ),
     });
   }
 
   messages.push({
     role: "system",
-    content:
-      'You must answer using only a JSON array. Each element must include `sequence` (integer starting at 1), `delay_ms` (non-negative integer), and `content` (string). Example: [{"sequence":1,"delay_ms":1200,"content":"Hello!"}]. Do NOT include any text before or after the JSON array. Also you should choose proper `delay_ms` for each message to act like a human is typing',
+    content: buildResponseOutputInstruction(emotionDeltaCaps),
   });
 
   return {
     messages,
     temperature: 1,
-    maxTokens: 300,
+    maxTokens: 1024,
   };
 }
 
@@ -164,6 +204,110 @@ function formatMessagesForChat(
   return formatted;
 }
 
+function buildEmotionGuidanceMessage(
+  snapshots: EmotionSnapshot[],
+  focusUserId: string | null,
+): string {
+  const lines: string[] = [];
+  lines.push(
+    "Emotion reference (range -100 to 100; positive = warmer/closer, negative = colder/annoyed):",
+  );
+
+  snapshots.forEach((snapshot) => {
+    lines.push(formatEmotionSnapshot(snapshot, focusUserId));
+  });
+
+  lines.push(
+    "Adjust your tone and content based on these states. If you propose emotion deltas, keep them reasonable and consistent with the persona.",
+  );
+  return lines.join("\n");
+}
+
+function buildEvaluationEmotionMessage(
+  snapshots: EmotionSnapshot[],
+): string {
+  const lines: string[] = [];
+  lines.push(
+    "Additional emotion context: prioritise users with higher affinity/trust and lower annoyance.",
+  );
+  snapshots.forEach((snapshot) => {
+    lines.push(formatEmotionSnapshot(snapshot, null));
+  });
+  lines.push(
+    "If you recommend replying to someone, you may include small `emotion_delta` adjustments (each within ±12) in the result.",
+  );
+  return lines.join("\n");
+}
+
+function buildResponseOutputInstruction(
+  deltaCaps?: Partial<Record<EmotionMetric, number>>,
+): string {
+  const capText = RESPONSE_EMOTION_METRICS.map((metric) => {
+    const cap = deltaCaps?.[metric] ?? OUTPUT_DELTA_BOUND;
+    return `${metric}: ±${cap}`;
+  }).join(", ");
+
+  return [
+    "You must return a strict JSON object with the following structure:",
+    "```json",
+    '{',
+    '  "messages": [',
+    '    {"sequence": 1, "delay_ms": 1200, "content": "..."}',
+    "  ],",
+    '  "emotion_delta": [',
+    '    {"user_id": "...", "metric": "affinity", "delta": 3, "reason": "..."}',
+    "  ]",
+    "}",
+    "```",
+    "- `messages` is required. It must be a non-empty array; each item needs `sequence` (integer starting at 1), `delay_ms` (non-negative integer), and `content` (string).",
+    "- `emotion_delta` is optional. Only include entries when you need to adjust emotions. Each entry requires `user_id`, `metric` (affinity|annoyance|trust|curiosity), and `delta` (integer). Keep each delta within [-12, 12]; avoid excessive adjustments. Persona-recommended max per update: " +
+      capText +
+      ".",
+    "- Do not add any extra text outside the JSON object.",
+  ].join("\n");
+}
+
+function formatEmotionSnapshot(
+  snapshot: EmotionSnapshot,
+  focusUserId: string | null,
+): string {
+  const isFocus = focusUserId && snapshot.targetUserId === focusUserId;
+  const prefix = isFocus ? "★ Focus Target" : "- User";
+  const header = `${prefix} <@${snapshot.targetUserId}>`;
+  const metricLines = RESPONSE_EMOTION_METRICS.map((metric) => {
+    const value = snapshot.state.metrics[metric];
+    const thresholds =
+      snapshot.personaThresholds?.[metric] ??
+      DEFAULT_THRESHOLD_FALLBACK[metric];
+    return `  · ${metric}: ${value} (${describeEmotionValue(value, thresholds, metric)})`;
+  });
+  return [header, ...metricLines].join("\n");
+}
+
+function describeEmotionValue(
+  value: number,
+  thresholds: number[],
+  metric: EmotionMetric,
+): string {
+  const labels = EMOTION_BUCKET_LABELS[metric] || EMOTION_BUCKET_LABELS.affinity;
+  const bucket = resolveBucketFromThresholds(value, thresholds);
+  const index = Math.min(bucket, labels.length - 1);
+  const candidate = labels[index];
+  return candidate ?? labels[labels.length - 1] ?? "Neutral";
+}
+
+function resolveBucketFromThresholds(value: number, thresholds: number[]): number {
+  const sorted = [...thresholds].sort((a, b) => a - b);
+  let bucket = sorted.length;
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (value < sorted[i]!) {
+      bucket = i;
+      break;
+    }
+  }
+  return bucket;
+}
+
 function buildEvaluationPrompt(context: EvaluationPromptContext): BuiltPrompt {
   const {
     evaluationPromptTemplate,
@@ -171,6 +315,7 @@ function buildEvaluationPrompt(context: EvaluationPromptContext): BuiltPrompt {
     channelContextMessages,
     batchMessages,
     contextLookback = 10,
+    emotionSnapshots,
   } = context;
 
   const resolvedPrompt = renderTemplate(evaluationPromptTemplate, {
@@ -191,10 +336,23 @@ function buildEvaluationPrompt(context: EvaluationPromptContext): BuiltPrompt {
     },
   ];
 
+  if (emotionSnapshots && emotionSnapshots.length > 0) {
+    messages.push({
+      role: "system",
+      content: buildEvaluationEmotionMessage(emotionSnapshots),
+    });
+  }
+
+  messages.push({
+    role: "system",
+    content:
+      "Return a strict JSON object with keys `response_score` (0.0-1.0 float), `target_message_id` (string or null), `reason` (string), `should_respond` (boolean), and optional `emotion_delta` array. Each element in `emotion_delta` must include `user_id` (string), `metric` (one of affinity|annoyance|trust|curiosity), `delta` (integer bounded within [-12, 12]), and optional `reason`. When no emotional adjustment is needed, omit `emotion_delta` or use an empty array.",
+  });
+
   return {
     messages,
     temperature: 0.2,
-    maxTokens: 200,
+    maxTokens: 1024,
   };
 }
 

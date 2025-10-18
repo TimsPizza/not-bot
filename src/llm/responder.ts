@@ -2,10 +2,26 @@
 import configService from "@/config";
 import contextManagerService from "@/context";
 import loggerService from "@/logger";
-import { AppConfig, SimpleMessage, StructuredResponseSegment } from "@/types";
+import {
+  AppConfig,
+  SimpleMessage,
+  StructuredResponseSegment,
+  ResponderResult,
+  EmotionDeltaInstruction,
+  EmotionMetric,
+  EmotionSnapshot,
+} from "@/types";
 import { callChatCompletionApi } from "./openai_client";
 import { jsonrepair } from "jsonrepair";
 import { PromptBuilder } from "@/prompt";
+
+const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
+  "affinity",
+  "annoyance",
+  "trust",
+  "curiosity",
+];
+
 class ResponderService {
   private static instance: ResponderService;
 
@@ -41,11 +57,16 @@ class ResponderService {
    */
   public async generateResponse(
     channelId: string,
-    systemPromptTemplate: string, // Added
-    personaDetails: string, // Added
-    languageConfig?: { primary: string; fallback: string; autoDetect: boolean }, // Added
+    systemPromptTemplate: string,
+    personaDetails: string,
+    languageConfig?: { primary: string; fallback: string; autoDetect: boolean },
     targetMessage?: SimpleMessage,
-  ): Promise<StructuredResponseSegment[] | null> {
+    emotionContext?: {
+      targetUserId?: string;
+      snapshots?: EmotionSnapshot[];
+      deltaCaps?: Partial<Record<EmotionMetric, number>>;
+    },
+  ): Promise<ResponderResult | null> {
     // Validate required configuration for primary LLM
     if (
       !this.config ||
@@ -93,6 +114,9 @@ class ResponderService {
         contextMessages,
         languageConfig,
         targetMessage,
+        targetUserId: emotionContext?.targetUserId,
+        emotionSnapshots: emotionContext?.snapshots,
+        emotionDeltaCaps: emotionContext?.deltaCaps,
       });
 
       // Call the API using the main client (for response generation)
@@ -121,30 +145,30 @@ class ResponderService {
         return null;
       }
 
-      const structured = this.parseStructuredResponse(cleanedText);
-      if (!structured) {
+      const responderOutput = this.parseResponderOutput(cleanedText);
+      if (!responderOutput) {
         loggerService.logger.warn(
           "Failed to parse structured response from LLM. Falling back to single message.",
         );
-        return [
-          {
-            sequence: 1,
-            delayMs: 0,
-            content: cleanedText,
-          },
-        ];
+        return {
+          segments: [
+            {
+              sequence: 1,
+              delayMs: 0,
+              content: cleanedText,
+            },
+          ],
+        };
       }
 
-      return structured;
+      return responderOutput;
     } catch (error) {
       loggerService.logger.error({ err: error }, "Error generating response");
       return null;
     }
   }
 
-  private parseStructuredResponse(
-    raw: string,
-  ): StructuredResponseSegment[] | null {
+  private parseResponderOutput(raw: string): ResponderResult | null {
     if (!raw) {
       return null;
     }
@@ -172,9 +196,15 @@ class ResponderService {
       return null;
     }
 
-    const segmentsSource = Array.isArray(parsed)
-      ? parsed
-      : (parsed as { messages?: unknown }).messages;
+    let segmentsSource: unknown;
+    let deltaSource: unknown;
+
+    if (Array.isArray(parsed)) {
+      segmentsSource = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      segmentsSource = (parsed as { messages?: unknown }).messages;
+      deltaSource = (parsed as { emotion_delta?: unknown }).emotion_delta;
+    }
 
     if (!Array.isArray(segmentsSource)) {
       loggerService.logger.warn(
@@ -183,43 +213,97 @@ class ResponderService {
       return null;
     }
 
-    const segments: StructuredResponseSegment[] = segmentsSource
-      .map((entry, index) => {
-        if (!entry || typeof entry !== "object") {
-          return null;
-        }
-
-        const sequenceRaw =
-          (entry as { sequence?: unknown }).sequence ?? index + 1;
-        const delayRaw = (entry as { delay_ms?: unknown }).delay_ms ?? 0;
-        const contentRaw = (entry as { content?: unknown }).content;
-
-        const sequence = Number(sequenceRaw);
-        const delayMs = Number(delayRaw);
-        const content =
-          typeof contentRaw === "string" ? contentRaw.trim() : undefined;
-
-        if (!Number.isFinite(sequence) || !content) {
-          return null;
-        }
-
-        return {
-          sequence: Math.max(1, Math.round(sequence)),
-          delayMs:
-            Number.isFinite(delayMs) && delayMs >= 0 ? Math.round(delayMs) : 0,
-          content,
-        } satisfies StructuredResponseSegment;
-      })
-      .filter(
-        (segment): segment is StructuredResponseSegment => segment !== null,
-      );
-
-    if (segments.length === 0) {
+    const segments = this.normalizeSegments(segmentsSource);
+    if (!segments.length) {
       return null;
     }
 
+    const emotionDeltas = this.normalizeEmotionDelta(deltaSource);
+
+    return {
+      segments,
+      emotionDeltas: emotionDeltas.length > 0 ? emotionDeltas : undefined,
+    };
+  }
+
+  private normalizeSegments(input: unknown): StructuredResponseSegment[] {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+
+    const segments: StructuredResponseSegment[] = [];
+    (input as unknown[]).forEach((entry, index) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+
+      const sequenceRaw = (entry as { sequence?: unknown }).sequence ?? index + 1;
+      const delayRaw = (entry as { delay_ms?: unknown }).delay_ms ?? 0;
+      const contentRaw = (entry as { content?: unknown }).content;
+
+      const sequence = Number(sequenceRaw);
+      const delayMs = Number(delayRaw);
+      const content =
+        typeof contentRaw === "string" ? contentRaw.trim() : undefined;
+
+      if (!Number.isFinite(sequence) || !content) {
+        return;
+      }
+
+      segments.push({
+        sequence: Math.max(1, Math.round(sequence)),
+        delayMs:
+          Number.isFinite(delayMs) && delayMs >= 0 ? Math.round(delayMs) : 0,
+        content,
+      });
+    });
+
     segments.sort((a, b) => a.sequence - b.sequence);
     return segments;
+  }
+
+  private normalizeEmotionDelta(input: unknown): EmotionDeltaInstruction[] {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+
+    const instructions: EmotionDeltaInstruction[] = [];
+    input.forEach((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+      const userId = (entry as { user_id?: unknown }).user_id;
+      const metric = (entry as { metric?: unknown }).metric;
+      const delta = (entry as { delta?: unknown }).delta;
+      const reason = (entry as { reason?: unknown }).reason;
+
+      if (typeof userId !== "string" || userId.length === 0) {
+        return;
+      }
+      if (typeof metric !== "string") {
+        return;
+      }
+      if (!SUPPORTED_EMOTION_METRICS.includes(metric as EmotionMetric)) {
+        return;
+      }
+
+      const numericDelta = Number(delta);
+      if (!Number.isFinite(numericDelta)) {
+        return;
+      }
+
+      const instruction: EmotionDeltaInstruction = {
+        userId,
+        metric: metric as EmotionMetric,
+        delta: Math.round(numericDelta),
+      };
+      if (typeof reason === "string" && reason.trim().length > 0) {
+        instruction.reason = reason.trim();
+      }
+      instructions.push(instruction);
+    });
+
+    return instructions;
   }
 }
 

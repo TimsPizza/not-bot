@@ -1,9 +1,17 @@
 // src/llm/llm_evaluator.ts
-import loggerService from "@/logger";
 import configService from "@/config";
-import { SimpleMessage, LLMEvaluationResult, AppConfig } from "@/types";
-import { callChatCompletionApi } from "./openai_client";
+import loggerService from "@/logger";
 import { PromptBuilder } from "@/prompt";
+import {
+  AppConfig,
+  EmotionDeltaInstruction,
+  EmotionMetric,
+  EmotionSnapshot,
+  LLMEvaluationResult,
+  SimpleMessage,
+} from "@/types";
+import { jsonrepair } from "jsonrepair";
+import { callChatCompletionApi } from "./openai_client";
 
 class LLMEvaluatorService {
   private static instance: LLMEvaluatorService;
@@ -45,6 +53,7 @@ class LLMEvaluatorService {
     personaDetails: string, // Added persona details
     batchMessages: SimpleMessage[],
     channelContextMessages: SimpleMessage[],
+    emotionSnapshots?: EmotionSnapshot[],
   ): Promise<LLMEvaluationResult | null> {
     // --- Calculate Effective Threshold ---
     const BASE_RESPONSE_THRESHOLD = 0.35; // Base score needed to consider responding
@@ -83,6 +92,7 @@ class LLMEvaluatorService {
         personaDetails,
         channelContextMessages,
         batchMessages,
+        emotionSnapshots,
       });
 
       const firstMessageContent = prompt.messages[0]?.content;
@@ -120,14 +130,14 @@ class LLMEvaluatorService {
       const jsonMatch = rawContent.match(/```json\s*([\s\S]+?)\s*```/);
       if (jsonMatch && jsonMatch[1]) {
         const jsonString = jsonMatch[1].trim();
-        parsedJson = JSON.parse(jsonString);
+        parsedJson = JSON.parse(jsonrepair(jsonString));
         loggerService.logger.debug(
           "LLM Evaluator response parsed from JSON block.",
         );
       } else {
         // Fallback: Try parsing directly
         try {
-          parsedJson = JSON.parse(rawContent.trim());
+          parsedJson = JSON.parse(jsonrepair(rawContent.trim()));
           loggerService.logger.debug(
             "LLM Evaluator response parsed directly as JSON.",
           );
@@ -154,13 +164,22 @@ class LLMEvaluatorService {
       }
 
       // Construct the final result object
+      const shouldRespondFlag =
+        typeof parsedJson.should_respond === "boolean"
+          ? parsedJson.should_respond
+          : parsedJson.response_score >= effectiveThreshold;
+
       const result: LLMEvaluationResult = {
         response_score: parsedJson.response_score,
         target_message_id: parsedJson.target_message_id,
         reason: parsedJson.reason,
-        // Derive should_respond based on the calculated effective threshold
-        should_respond: parsedJson.response_score >= effectiveThreshold,
+        should_respond: shouldRespondFlag,
       };
+
+      const emotionDeltas = parseEmotionDeltaArray(parsedJson.emotion_delta);
+      if (emotionDeltas.length > 0) {
+        result.emotionDeltas = emotionDeltas;
+      }
 
       // Ensure target_message_id is null if score is below the effective threshold
       if (
@@ -188,6 +207,59 @@ class LLMEvaluatorService {
       return null;
     }
   }
+}
+
+
+const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
+  "affinity",
+  "annoyance",
+  "trust",
+  "curiosity",
+];
+
+function parseEmotionDeltaArray(
+  input: unknown,
+): EmotionDeltaInstruction[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const deltas: EmotionDeltaInstruction[] = [];
+  input.forEach((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const userId = (entry as { user_id?: unknown }).user_id;
+    const metric = (entry as { metric?: unknown }).metric;
+    const delta = (entry as { delta?: unknown }).delta;
+    const reason = (entry as { reason?: unknown }).reason;
+
+    if (typeof userId !== "string" || userId.length === 0) {
+      return;
+    }
+    if (typeof metric !== "string") {
+      return;
+    }
+    if (!SUPPORTED_EMOTION_METRICS.includes(metric as EmotionMetric)) {
+      return;
+    }
+    const deltaNumber = Number(delta);
+    if (!Number.isFinite(deltaNumber)) {
+      return;
+    }
+
+    const instruction: EmotionDeltaInstruction = {
+      userId,
+      metric: metric as EmotionMetric,
+      delta: Math.round(deltaNumber),
+    };
+    if (typeof reason === "string" && reason.trim().length > 0) {
+      instruction.reason = reason.trim();
+    }
+    deltas.push(instruction);
+  });
+
+  return deltas;
 }
 
 // Export the singleton instance directly

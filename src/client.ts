@@ -8,16 +8,20 @@ import {
 import type { ConfigCommandContext } from "@/commands/config/types";
 import configService from "@/config"; // Import class type
 import contextManagerService from "@/context";
+import emotionService from "@/emotions";
 import llmEvaluatorService from "@/llm/llm_evaluator";
 import responderService from "@/llm/responder";
 import loggerService from "@/logger";
 import scorerService from "@/scorer"; // Ensure this uses getDecisionForBatch
 import {
+  EmotionDeltaInstruction,
+  EmotionDeltaSuggestion,
+  EmotionSnapshot,
   PersonaDefinition,
   ScoreDecision,
+  ServerConfig,
   SimpleMessage,
   StructuredResponseSegment,
-  ServerConfig,
 } from "@/types";
 import {
   CacheType, // Added
@@ -160,6 +164,12 @@ class BotClient {
       hasBeenRepliedTo: false, // 新增：用于总结功能
     };
 
+    emotionService.recordInteraction(
+      simpleMessage.channelId,
+      simpleMessage.authorId,
+      simpleMessage.timestamp,
+    );
+
     // 3. Update Context (do this regardless of buffering/scoring)
     // Pass serverId (guildId) if available
     if (simpleMessage.guildId) {
@@ -196,6 +206,13 @@ class BotClient {
     );
 
     let activeServerConfig: ServerConfig | null = null;
+    const candidateUserIds = Array.from(
+      new Set(
+        messages
+          .map((msg) => msg.authorId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    );
 
     // 1. Score Messages Individually
     // Note: scorerService.scoreMessages might internally use context now if needed by rules
@@ -291,7 +308,14 @@ class BotClient {
           shouldRespond = false; // Cannot evaluate, so don't respond
           break; // Exit the switch case for Evaluate
         }
-        // -----------------------------------
+
+        const evaluationEmotionSnapshots =
+        emotionService.getSnapshots(
+          channelId,
+          evaluation_personaDefinition,
+          candidateUserIds,
+          5,
+        );
 
         // Pass responsiveness, prompt template, persona details, batch, and context to the evaluator
         // Note: Pass the details loaded specifically for evaluation
@@ -301,7 +325,17 @@ class BotClient {
           evaluation_personaDefinition.details,
           messages,
           channelContextMessages,
+          evaluationEmotionSnapshots,
         );
+
+        if (evaluationResult?.emotionDeltas?.length) {
+          this.applyEmotionDeltas(
+            channelId,
+            evaluation_personaDefinition,
+            evaluationResult.emotionDeltas,
+            "evaluator",
+          );
+        }
 
         if (evaluationResult?.should_respond) {
           shouldRespond = true;
@@ -450,17 +484,47 @@ class BotClient {
           }
         }
 
+        let emotionSnapshotsForResponse: EmotionSnapshot[] | undefined;
+        const targetUserId = finalTargetMessage?.authorId;
+        if (personaDefinition) {
+          const snapshotUserIds = new Set<string>();
+          if (targetUserId) {
+            snapshotUserIds.add(targetUserId);
+          }
+          candidateUserIds.forEach((id) => snapshotUserIds.add(id));
+          emotionSnapshotsForResponse = emotionService.getSnapshots(
+            channelId,
+            personaDefinition,
+            Array.from(snapshotUserIds),
+            5,
+          );
+        }
+
         // Pass the specific target message, template, details, and language config to the responder
-        const responseSegments = await responderService.generateResponse(
+        const responseResult = await responderService.generateResponse(
           channelId,
-          systemPromptTemplate, // Already checked for existence
-          personaDetails, // Already checked for existence
-          languageConfig, // Language configuration
+          systemPromptTemplate,
+          personaDetails,
+          languageConfig,
           finalTargetMessage ?? undefined,
+          {
+            targetUserId,
+            snapshots: emotionSnapshotsForResponse,
+            deltaCaps: personaDefinition?.emotionDeltaCaps,
+          },
         );
 
-        if (responseSegments && responseSegments.length > 0) {
-          await this.enqueueResponseSegments(channelId, responseSegments);
+        if (responseResult && responseResult.segments.length > 0) {
+          await this.enqueueResponseSegments(channelId, responseResult.segments);
+
+          if (responseResult.emotionDeltas?.length && personaDefinition) {
+            this.applyEmotionDeltas(
+              channelId,
+              personaDefinition,
+              responseResult.emotionDeltas,
+              "responder",
+            );
+          }
 
           // --- Mark the target message as responded to ---
           // If we had a specific target (from high score or LLM eval), mark it.
@@ -488,7 +552,54 @@ class BotClient {
     }
   }
 
-  /**
+ 
+  private applyEmotionDeltas(
+    channelId: string,
+    personaDefinition: PersonaDefinition | undefined,
+    deltas: EmotionDeltaInstruction[] | undefined,
+    source: string,
+  ): void {
+    if (!personaDefinition || !deltas || deltas.length === 0) {
+      return;
+    }
+
+    const grouped = new Map<string, EmotionDeltaSuggestion[]>();
+    deltas.forEach((delta) => {
+      if (!delta || typeof delta.userId !== "string" || !delta.userId) {
+        return;
+      }
+      if (!delta.metric) {
+        return;
+      }
+      const numericDelta = Number(delta.delta);
+      if (!Number.isFinite(numericDelta)) {
+        return;
+      }
+      const existing = grouped.get(delta.userId) ?? [];
+      existing.push({
+        metric: delta.metric,
+        delta: Math.round(numericDelta),
+        reason: delta.reason,
+      });
+      grouped.set(delta.userId, existing);
+    });
+
+    const timestamp = Date.now();
+    grouped.forEach((suggestions, userId) => {
+      emotionService.applyModelSuggestions(channelId, userId, {
+        suggestions,
+        persona: personaDefinition,
+        source,
+        timestamp,
+      });
+      loggerService.logger.debug(
+        { channelId, userId, source, suggestions },
+        "Applied emotion delta suggestions.",
+      );
+    });
+  }
+  
+ /**
    * @description Sends a response message to a specific Discord channel and adds it to context.
    * @param channelId The ID of the target channel.
    * @param content The text content of the response.

@@ -1,5 +1,5 @@
 {
-  "version": "7",
+  "version": "8",
   "dialect": "sqlite",
   "entries": [
     {
@@ -14,6 +14,13 @@
       "version": "7",
       "when": 1758498966062,
       "tag": "0002_behavior_toggles",
+      "breakpoints": false
+    },
+    {
+      "idx": 2,
+      "version": "8",
+      "when": 1758501234567,
+      "tag": "0003_emotion_tracking",
       "breakpoints": false
     }
   ]

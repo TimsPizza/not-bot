@@ -58,6 +58,7 @@ export interface LLMEvaluationResult {
   response_score: number; // Score from 0.0 to 1.0 indicating how strongly the LLM suggests responding
   target_message_id: string | null; // ID of the message selected for response, if any
   reason: string; // Explanation from the LLM
+  emotionDeltas?: EmotionDeltaInstruction[]; // Optional emotion adjustments suggested by the model
 }
 
 /**
@@ -75,6 +76,11 @@ export interface StructuredResponseSegment {
   sequence: number;
   delayMs: number;
   content: string;
+}
+
+export interface ResponderResult {
+  segments: StructuredResponseSegment[];
+  emotionDeltas?: EmotionDeltaInstruction[];
 }
 
 /**
@@ -248,10 +254,41 @@ export interface PersonaDefinition {
   name: string; // Display name
   description: string; // Brief description
   details: string; // The core persona definition text to be injected into prompt templates
+  emotionThresholds?: EmotionThresholdMap; // Metric => ascending breakpoints
+  emotionDeltaCaps?: Partial<Record<EmotionMetric, number>>; // Metric => max absolute delta per update
 }
 
 // Renamed PersonaPreset to PersonaDefinition for consistency
 export type PersonaPreset = PersonaDefinition;
+
+export type EmotionMetric = "affinity" | "annoyance" | "trust" | "curiosity";
+
+export type EmotionThresholdMap = Partial<Record<EmotionMetric, number[]>>;
+
+export interface EmotionState {
+  channelId: string;
+  userId: string;
+  metrics: Record<EmotionMetric, number>; // clamped [-100, 100]
+  lastInteractionAt: number;
+  lastDecayAt: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface EmotionDeltaSuggestion {
+  metric: EmotionMetric;
+  delta: number;
+  reason?: string;
+}
+
+export interface EmotionDeltaInstruction extends EmotionDeltaSuggestion {
+  userId: string;
+}
+
+export interface EmotionSnapshot {
+  targetUserId: string;
+  state: EmotionState;
+  personaThresholds: EmotionThresholdMap | null;
+}
 
 // 新增：语言配置系统
 export enum SupportedLanguage {
