@@ -14,8 +14,8 @@ import {
   ProactiveMessageSummary,
 } from "@/types";
 import { callChatCompletionApi } from "./openai_client";
-import { jsonrepair } from "jsonrepair";
 import { PromptBuilder } from "@/prompt";
+import { parseStructuredJson } from "./structuredJson";
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "affinity",
@@ -177,26 +177,8 @@ class ResponderService {
       return null;
     }
 
-    let cleaned = raw.trim();
-    if (cleaned.startsWith("```")) {
-      cleaned = cleaned.replace(/^```(?:json)?/i, "");
-      cleaned = cleaned.replace(/```$/i, "");
-    }
-    // fuck it, jsonrepair cannot cleanup this
-    cleaned = cleaned.replace("<｜begin▁of▁sentence｜>", "");
-
-    let parsed: unknown;
-    try {
-      // maybe need to remove BOS
-      cleaned = jsonrepair(cleaned);
-      parsed = JSON.parse(cleaned);
-    } catch (error) {
-      loggerService.logger.warn(
-        {
-          err: error instanceof Error ? error.message : error,
-        },
-        "LLM response is not valid JSON for structured segments.",
-      );
+    const parsed = parseStructuredJson(raw, "responder");
+    if (!parsed) {
       return null;
     }
 

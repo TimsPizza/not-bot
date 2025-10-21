@@ -12,8 +12,8 @@ import {
   ProactiveMessageSummary,
   SimpleMessage,
 } from "@/types";
-import { jsonrepair } from "jsonrepair";
 import { callChatCompletionApi } from "./openai_client";
+import { parseStructuredJson } from "./structuredJson";
 
 class LLMEvaluatorService {
   private static instance: LLMEvaluatorService;
@@ -128,71 +128,60 @@ class LLMEvaluatorService {
       }
 
       // --- Parse and Validate JSON Response ---
-      let parsedJson: any = null;
-
-      // Try to extract JSON from markdown code block first
       const jsonMatch = rawContent.match(/```json\s*([\s\S]+?)\s*```/);
-      if (jsonMatch && jsonMatch[1]) {
-        const jsonString = jsonMatch[1].trim();
-        parsedJson = JSON.parse(jsonrepair(jsonString));
-        loggerService.logger.debug(
-          "LLM Evaluator response parsed from JSON block.",
+      const parsedJson = parseStructuredJson(
+        jsonMatch && jsonMatch[1] ? jsonMatch[1] : rawContent,
+        "evaluator",
+      );
+
+      if (!parsedJson || typeof parsedJson !== "object" || Array.isArray(parsedJson)) {
+        throw new Error(
+          `Parsed evaluator payload is not an object. Raw: ${rawContent}`,
         );
-      } else {
-        // Fallback: Try parsing directly
-        try {
-          parsedJson = JSON.parse(jsonrepair(rawContent.trim()));
-          loggerService.logger.debug(
-            "LLM Evaluator response parsed directly as JSON.",
-          );
-        } catch (parseError) {
-          throw new Error(
-            `Could not extract or parse JSON block from LLM evaluator response. Raw: ${rawContent}`,
-          );
-        }
       }
+
+      const structured = parsedJson as Record<string, any>;
 
       // Validate structure based on the new LLMEvaluationResult type
       if (
-        !parsedJson ||
-        typeof parsedJson.response_score !== "number" ||
-        parsedJson.response_score < 0 ||
-        parsedJson.response_score > 1 || // Check range
-        typeof parsedJson.reason !== "string" ||
-        (parsedJson.target_message_id !== null &&
-          typeof parsedJson.target_message_id !== "string")
+        typeof structured.response_score !== "number" ||
+        structured.response_score < 0 ||
+        structured.response_score > 1 || // Check range
+        typeof structured.reason !== "string" ||
+        (structured.target_message_id !== null &&
+          typeof structured.target_message_id !== "string")
       ) {
         throw new Error(
-          `Parsed JSON from LLM evaluator has incorrect structure or invalid values. Parsed: ${JSON.stringify(parsedJson)}`,
+          `Parsed JSON from LLM evaluator has incorrect structure or invalid values. Parsed: ${JSON.stringify(structured)}`,
         );
       }
 
       // Construct the final result object
       const shouldRespondFlag =
-        typeof parsedJson.should_respond === "boolean"
-          ? parsedJson.should_respond
-          : parsedJson.response_score >= effectiveThreshold;
+        typeof structured.should_respond === "boolean"
+          ? structured.should_respond
+          : structured.response_score >= effectiveThreshold;
 
       const result: LLMEvaluationResult = {
-        response_score: parsedJson.response_score,
-        target_message_id: parsedJson.target_message_id,
-        reason: parsedJson.reason,
+        response_score: structured.response_score,
+        target_message_id: structured.target_message_id,
+        reason: structured.reason,
         should_respond: shouldRespondFlag,
       };
 
-      const emotionDeltas = parseEmotionDeltaArray(parsedJson.emotion_delta);
+      const emotionDeltas = parseEmotionDeltaArray(structured.emotion_delta);
       if (emotionDeltas.length > 0) {
         result.emotionDeltas = emotionDeltas;
       }
 
       const proactiveDeltas = parseProactiveMessagesArray(
-        parsedJson.proactive_messages,
+        structured.proactive_messages,
       );
       if (proactiveDeltas.length > 0) {
         result.proactiveMessages = proactiveDeltas;
       }
 
-      const cancelScheduleIds = parseCancelIds(parsedJson.cancel_schedule_ids);
+      const cancelScheduleIds = parseCancelIds(structured.cancel_schedule_ids);
       if (cancelScheduleIds.length > 0) {
         result.cancelScheduleIds = cancelScheduleIds;
       }
