@@ -10,6 +10,8 @@ import {
   EmotionDeltaInstruction,
   EmotionMetric,
   EmotionSnapshot,
+  ProactiveMessageDraft,
+  ProactiveMessageSummary,
 } from "@/types";
 import { callChatCompletionApi } from "./openai_client";
 import { jsonrepair } from "jsonrepair";
@@ -65,6 +67,7 @@ class ResponderService {
       targetUserId?: string;
       snapshots?: EmotionSnapshot[];
       deltaCaps?: Partial<Record<EmotionMetric, number>>;
+      pendingProactiveMessages?: ProactiveMessageSummary[];
     },
   ): Promise<ResponderResult | null> {
     // Validate required configuration for primary LLM
@@ -117,6 +120,7 @@ class ResponderService {
         targetUserId: emotionContext?.targetUserId,
         emotionSnapshots: emotionContext?.snapshots,
         emotionDeltaCaps: emotionContext?.deltaCaps,
+        pendingProactiveMessages: emotionContext?.pendingProactiveMessages,
       });
 
       // Call the API using the main client (for response generation)
@@ -198,12 +202,16 @@ class ResponderService {
 
     let segmentsSource: unknown;
     let deltaSource: unknown;
+    let proactiveSource: unknown;
+    let cancelSource: unknown;
 
     if (Array.isArray(parsed)) {
       segmentsSource = parsed;
     } else if (parsed && typeof parsed === "object") {
       segmentsSource = (parsed as { messages?: unknown }).messages;
       deltaSource = (parsed as { emotion_delta?: unknown }).emotion_delta;
+      proactiveSource = (parsed as { proactive_messages?: unknown }).proactive_messages;
+      cancelSource = (parsed as { cancel_schedule_ids?: unknown }).cancel_schedule_ids;
     }
 
     if (!Array.isArray(segmentsSource)) {
@@ -219,10 +227,16 @@ class ResponderService {
     }
 
     const emotionDeltas = this.normalizeEmotionDelta(deltaSource);
+    const proactiveMessages = this.normalizeProactiveMessages(proactiveSource);
+    const cancelScheduleIds = this.normalizeCancelIds(cancelSource);
 
     return {
       segments,
       emotionDeltas: emotionDeltas.length > 0 ? emotionDeltas : undefined,
+      proactiveMessages:
+        proactiveMessages.length > 0 ? proactiveMessages : undefined,
+      cancelScheduleIds:
+        cancelScheduleIds.length > 0 ? cancelScheduleIds : undefined,
     };
   }
 
@@ -304,6 +318,55 @@ class ResponderService {
     });
 
     return instructions;
+  }
+
+  private normalizeProactiveMessages(input: unknown): ProactiveMessageDraft[] {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+
+    const drafts: ProactiveMessageDraft[] = [];
+    input.forEach((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return;
+      }
+
+      const sendAt = (entry as { send_at?: unknown }).send_at;
+      const content = (entry as { content?: unknown }).content;
+      if (typeof sendAt !== "string" || typeof content !== "string") {
+        return;
+      }
+
+      const idValue = (entry as { id?: unknown }).id;
+      const reason = (entry as { reason?: unknown }).reason;
+
+      const draft: ProactiveMessageDraft = {
+        sendAt,
+        content,
+      };
+
+      if (typeof idValue === "string" && idValue.trim().length > 0) {
+        draft.id = idValue.trim().toLowerCase();
+      }
+      if (typeof reason === "string" && reason.trim().length > 0) {
+        draft.reason = reason.trim();
+      }
+
+      drafts.push(draft);
+    });
+
+    return drafts;
+  }
+
+  private normalizeCancelIds(input: unknown): string[] {
+    if (!Array.isArray(input)) {
+      return [];
+    }
+    return input
+      .map((value) =>
+        typeof value === "string" ? value.trim().toLowerCase() : null,
+      )
+      .filter((value): value is string => Boolean(value));
   }
 }
 

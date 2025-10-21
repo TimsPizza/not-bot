@@ -20,7 +20,7 @@ class BufferQueueService {
 
   private bufferSize: number = 10; // Default
   private bufferTimeWindowMs: number = 5000; // Default
-  private flushCallback: FlushCallback | null = null; // Callback to trigger scoring/evaluation
+  private flushCallback: FlushCallback | null = null; // Callback to trigger evaluation/response pipeline
 
   private constructor() {
     try {
@@ -50,7 +50,7 @@ class BufferQueueService {
 
   /**
    * @description Sets the callback function to be executed when the buffer is flushed.
-   * This will typically be the function that triggers the ScorerService.
+   * This will typically be the function that triggers the evaluation/response pipeline.
    * @param callback The async function to call with channelId and messages.
    */
   public setFlushCallback(callback: FlushCallback): void {

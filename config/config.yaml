@@ -6,10 +6,6 @@
 bufferSize: 10 # Max messages in buffer before forced flush
 bufferTimeWindowMs: 5000 # Max time (ms) a message stays in buffer before flush
 
-# --- Scoring Thresholds ---
-scoreThresholdRespond: 25 # Score >= this triggers immediate response
-scoreThresholdDiscard: -10 # Score <= this triggers discard
-
 # --- Context Management ---
 contextMaxMessages: 20 # Max number of messages to keep in channel context
 contextMaxAgeSeconds: 3600 # Max age (seconds) for messages in context (1 hour)
@@ -21,7 +17,6 @@ logLevel: "info" # Options: trace, debug, info, warn, error
 # These paths MUST be absolute paths or correctly resolvable by the environment.
 # If using environment variables (e.g., PERSONA_PROMPT_FILE_PATH), they take precedence.
 personaPromptFile: "" # ABSOLUTE path to prompts.yaml
-scoringRulesFile: "" # ABSOLUTE path to scoring_rules.json
 contextStoragePath: "" # ABSOLUTE path to directory for context files
 
 # 新增：语言配置系统

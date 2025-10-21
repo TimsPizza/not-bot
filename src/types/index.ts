@@ -1,7 +1,5 @@
 // src/types/index.ts
 
-import { Message } from "discord.js";
-
 /**
  * @description Represents a simplified Discord message object relevant to the bot.
  * We don't need the full discord.js Message object everywhere.
@@ -32,24 +30,6 @@ export interface SimpleMessage {
 }
 
 /**
- * @description The result of scoring a single message.
- */
-export interface ScoringResult {
-  messageId: string;
-  score: number;
-  reasons: string[]; // Explanations for the score (e.g., "mentioned bot", "long message")
-}
-
-/**
- * @description The decision levels after scoring.
- */
-export enum ScoreDecision {
-  Respond = "RESPOND",
-  Discard = "DISCARD",
-  Evaluate = "EVALUATE",
-}
-
-/**
  * @description The output format for the lightweight LLM evaluation module.
  * Includes a score indicating the confidence/appropriateness of responding.
  */
@@ -59,6 +39,8 @@ export interface LLMEvaluationResult {
   target_message_id: string | null; // ID of the message selected for response, if any
   reason: string; // Explanation from the LLM
   emotionDeltas?: EmotionDeltaInstruction[]; // Optional emotion adjustments suggested by the model
+  proactiveMessages?: ProactiveMessageDraft[];
+  cancelScheduleIds?: string[];
 }
 
 /**
@@ -81,20 +63,30 @@ export interface StructuredResponseSegment {
 export interface ResponderResult {
   segments: StructuredResponseSegment[];
   emotionDeltas?: EmotionDeltaInstruction[];
+  proactiveMessages?: ProactiveMessageDraft[];
+  cancelScheduleIds?: string[];
 }
 
-/**
- * @description Structure for scoring rules loaded from JSON.
- * Example: { "mentionBot": { "weight": 50, "description": "User mentioned the bot" } }
- */
-export interface ScoringRule {
-  weight: number;
-  description: string;
-  // Optional: Add more complex conditions later if needed
-  // condition?: (message: SimpleMessage) => boolean;
+export type ProactiveMessageStatus =
+  | "scheduled"
+  | "cancelled"
+  | "sent"
+  | "skipped";
+
+export interface ProactiveMessageSummary {
+  id: string;
+  scheduledAt: number;
+  contentPreview: string;
+  status: ProactiveMessageStatus;
+  reason?: string | null;
 }
 
-export type ScoringRules = Record<string, ScoringRule>;
+export interface ProactiveMessageDraft {
+  id?: string;
+  sendAt: string;
+  content: string;
+  reason?: string;
+}
 
 /**
  * @description Structure for the main configuration (config.yaml). Values are typically loaded from environment variables first.
@@ -115,13 +107,10 @@ export interface AppConfig {
   // Bot Behavior Configuration
   bufferSize: number; // Max messages in buffer before flush
   bufferTimeWindowMs: number; // Max time before flush (milliseconds)
-  scoreThresholdRespond: number;
-  scoreThresholdDiscard: number;
   contextMaxMessages: number; // Max messages to keep in context
   contextMaxAgeSeconds: number; // Max age of context messages (seconds)
   logLevel: "info" | "warn" | "error" | "debug" | "trace";
   personaPromptFile: string; // Path to BASE persona prompt template file (e.g., prompts.yaml)
-  scoringRulesFile: string; // Path to BASE scoring rules JSON file
   // Paths below are now expected to be provided via environment variables
   serverDataPath: string; // Base path for all server-specific data (e.g., data/)
   // presetPersonasPath: string; // Path to the directory containing preset persona JSON files (e.g., personas/)

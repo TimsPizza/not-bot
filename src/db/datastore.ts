@@ -32,3 +32,14 @@ export {
   upsertChannelEmotion,
   listTopChannelEmotions,
 } from "./repositories/emotionsRepository";
+
+export {
+  createProactiveMessage,
+  getProactiveMessageByPublicId,
+  listPendingProactiveMessages,
+  listDueProactiveMessages,
+  updateProactiveMessageStatus,
+  updateProactiveMessageContent,
+  cancelProactiveMessages,
+  rescheduleProactiveMessage,
+} from "./repositories/proactiveMessagesRepository";

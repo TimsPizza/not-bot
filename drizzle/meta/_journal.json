@@ -1,5 +1,5 @@
 {
-  "version": "8",
+  "version": "9",
   "dialect": "sqlite",
   "entries": [
     {
@@ -21,6 +21,13 @@
       "version": "8",
       "when": 1758501234567,
       "tag": "0003_emotion_tracking",
+      "breakpoints": false
+    },
+    {
+      "idx": 3,
+      "version": "9",
+      "when": 1758502234567,
+      "tag": "0004_proactive_queue",
       "breakpoints": false
     }
   ]

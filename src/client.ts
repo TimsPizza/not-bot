@@ -8,17 +8,26 @@ import {
 import type { ConfigCommandContext } from "@/commands/config/types";
 import configService from "@/config"; // Import class type
 import contextManagerService from "@/context";
+import type { ChannelProactiveMessageRow } from "@/db/schema";
 import emotionService from "@/emotions";
 import llmEvaluatorService from "@/llm/llm_evaluator";
 import responderService from "@/llm/responder";
 import loggerService from "@/logger";
-import scorerService from "@/scorer"; // Ensure this uses getDecisionForBatch
+import {
+  cancelScheduledMessages,
+  findProactiveMessage,
+  getDueProactiveMessages,
+  getPendingSummaries,
+  markProactiveMessageStatus,
+  rescheduleExistingProactiveMessage,
+  scheduleProactiveMessage,
+} from "@/proactive";
 import {
   EmotionDeltaInstruction,
   EmotionDeltaSuggestion,
   EmotionSnapshot,
   PersonaDefinition,
-  ScoreDecision,
+  ProactiveMessageDraft,
   ServerConfig,
   SimpleMessage,
   StructuredResponseSegment,
@@ -36,10 +45,24 @@ import {
   TextChannel,
 } from "discord.js";
 
+interface ConversationContext {
+  channelId: string;
+  messages: SimpleMessage[];
+  serverConfig: ServerConfig | null;
+  personaDefinition: PersonaDefinition;
+  systemPromptTemplate: string;
+  evaluationPromptTemplate: string;
+  languageConfig?: { primary: string; fallback: string; autoDetect: boolean };
+  channelContextMessages: SimpleMessage[];
+  candidateUserIds: string[];
+}
+
 class BotClient {
+  private static readonly PROACTIVE_DISPATCH_INTERVAL_MS = 60_000;
   private client: Client;
   private botId: string | null = null;
   private responseQueues: Map<string, Promise<void>> = new Map();
+  private proactiveInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     const config = configService.getConfig(); // Assuming config is loaded synchronously
@@ -55,7 +78,8 @@ class BotClient {
     });
 
     this.registerEventHandlers();
-    this.connectBufferToScorer(); // Connect the buffer flush to the scoring logic
+    this.connectBufferToPipeline(); // Connect the buffer flush to the evaluation pipeline
+    this.startProactiveDispatchLoop();
   }
 
   /**
@@ -87,9 +111,9 @@ class BotClient {
   }
 
   /**
-   * @description Connects the BufferQueueService flush mechanism to the scoring pipeline.
+   * @description Connects the BufferQueueService flush mechanism to the evaluation/response pipeline.
    */
-  private connectBufferToScorer(): void {
+  private connectBufferToPipeline(): void {
     bufferQueueService.setFlushCallback(this.processMessageBatch.bind(this));
   }
 
@@ -170,7 +194,7 @@ class BotClient {
       simpleMessage.timestamp,
     );
 
-    // 3. Update Context (do this regardless of buffering/scoring)
+    // 3. Update Context (do this regardless of buffering/evaluation pipeline)
     // Pass serverId (guildId) if available
     if (simpleMessage.guildId) {
       contextManagerService.updateContext(
@@ -201,358 +225,379 @@ class BotClient {
     channelId: string,
     messages: SimpleMessage[],
   ): Promise<void> {
+    if (messages.length === 0) {
+      return;
+    }
+
     loggerService.logger.info(
       `Processing batch of ${messages.length} messages for channel ${channelId}`,
     );
 
-    let activeServerConfig: ServerConfig | null = null;
-    const candidateUserIds = Array.from(
-      new Set(
-        messages
-          .map((msg) => msg.authorId)
-          .filter((id): id is string => typeof id === "string" && id.length > 0),
-      ),
-    );
-
-    // 1. Score Messages Individually
-    // Note: scorerService.scoreMessages might internally use context now if needed by rules
-    const scoringResults = scorerService.scoreMessages(channelId, messages);
-
-    // 2. Get Overall Decision for the Batch using the updated scorer method
-    // Note: getDecisionForBatch currently does NOT use context based on user feedback
-    const batchDecision = scorerService.getDecisionForBatch(scoringResults);
-
-    // 3. Handle Batch Decision
-    let shouldRespond = false;
-    let finalTargetMessage: SimpleMessage | null = null; // Message to target, if any
-    // personaDefinition will be loaded later if needed
-    // const firstMessage = messages[0]; // Define later when known to be safe
-
-    switch (batchDecision) {
-      case ScoreDecision.Respond:
-        loggerService.logger.info(
-          `Batch for channel ${channelId} scored high. Proceeding to generate response.`,
-        );
-        shouldRespond = true;
-        // For direct response based on batch score, we don't have a specific target message from scoring alone.
-        // The responder will use the general context.
-        // Find the highest scoring message in the batch to potentially mark as responded to later
-        let highestScore = -Infinity;
-        let highestScoringMsgId: string | null = null;
-        scoringResults.forEach((r) => {
-          if (r.score > highestScore) {
-            highestScore = r.score;
-            highestScoringMsgId = r.messageId;
-          }
-        });
-        finalTargetMessage =
-          messages.find((msg) => msg.id === highestScoringMsgId) || null;
-        if (finalTargetMessage) {
-          loggerService.logger.debug(
-            `Highest scoring message in batch (ID: ${finalTargetMessage.id}) identified for potential marking.`,
-          );
-        }
-        break;
-
-      case ScoreDecision.Evaluate:
-        loggerService.logger.info(
-          `Batch for channel ${channelId} scored in evaluation range. Evaluating with LLM using context.`,
-        );
-        // --- Get channel context ---
-        const context = contextManagerService.getContext(channelId);
-        const channelContextMessages = context?.messages || [];
-        loggerService.logger.debug(
-          `Retrieved ${channelContextMessages.length} context messages for evaluation.`,
-        );
-        // -------------------------
-
-        // --- Get server responsiveness ---
-        let responsiveness = 0.6; // Default if not in a guild
-        const firstMessage = messages[0]; // Get first message to find guildId
-        if (firstMessage?.guildId || firstMessage?.channelId) {
-          const serverConfig = configService.getServerConfig(
-            firstMessage.guildId ?? firstMessage.channelId, // DMs don't have a guildId, so use the channelId
-          );
-          activeServerConfig = serverConfig;
-          responsiveness = serverConfig.responsiveness;
-        } else {
-          loggerService.logger.warn(
-            `Could not determine guildId from message batch in channel ${channelId}. Using default responsiveness.`,
-          );
-        }
-        // --------------------------------
-
-        // --- Get Persona and Prompt Template ---
-        let evaluation_personaDefinition: PersonaDefinition | undefined; // Use temporary name for this scope
-        let evaluationPromptTemplate: string | undefined;
-        const evaluation_firstMessage = messages[0]; // Safe to access here if messages is not empty
-
-        if (
-          evaluation_firstMessage?.guildId ||
-          evaluation_firstMessage?.channelId
-        ) {
-          evaluation_personaDefinition =
-            configService.getPersonaDefinitionForContext(
-              evaluation_firstMessage.guildId ??
-                evaluation_firstMessage.channelId, // DMs don't have a guildId, so use the channelId
-              channelId,
-            );
-          const basePrompts = configService.getPersonaPrompts();
-          evaluationPromptTemplate = basePrompts?.evaluationPrompt;
-        }
-
-        if (!evaluation_personaDefinition || !evaluationPromptTemplate) {
-          loggerService.logger.error(
-            `Could not load persona definition or evaluation prompt template for ${evaluation_firstMessage?.guildId}/${channelId}. Cannot evaluate.`,
-          );
-          shouldRespond = false; // Cannot evaluate, so don't respond
-          break; // Exit the switch case for Evaluate
-        }
-
-        const evaluationEmotionSnapshots =
-        emotionService.getSnapshots(
-          channelId,
-          evaluation_personaDefinition,
-          candidateUserIds,
-          5,
-        );
-
-        // Pass responsiveness, prompt template, persona details, batch, and context to the evaluator
-        // Note: Pass the details loaded specifically for evaluation
-        const evaluationResult = await llmEvaluatorService.evaluateMessages(
-          responsiveness,
-          evaluationPromptTemplate,
-          evaluation_personaDefinition.details,
-          messages,
-          channelContextMessages,
-          evaluationEmotionSnapshots,
-        );
-
-        if (evaluationResult?.emotionDeltas?.length) {
-          this.applyEmotionDeltas(
-            channelId,
-            evaluation_personaDefinition,
-            evaluationResult.emotionDeltas,
-            "evaluator",
-          );
-        }
-
-        if (evaluationResult?.should_respond) {
-          shouldRespond = true;
-          // Check if the LLM specified a target message
-          if (evaluationResult.target_message_id) {
-            // Find the target message within the current batch
-            finalTargetMessage =
-              messages.find(
-                (msg) => msg.id === evaluationResult.target_message_id,
-              ) || null;
-            if (finalTargetMessage) {
-              loggerService.logger.info(
-                `LLM Evaluator recommended responding specifically to message ${finalTargetMessage.id}. Reason: ${evaluationResult.reason}`,
-              );
-            } else {
-              // LLM specified a target, but it wasn't found in the current batch (edge case)
-              loggerService.logger.warn(
-                `LLM Evaluator recommended responding to ${evaluationResult.target_message_id}, but message not found in current batch. Responding generally.`,
-              );
-              finalTargetMessage = null; // Respond generally
-            }
-          } else {
-            // LLM decided to respond, but didn't pick a specific message - respond generally
-            loggerService.logger.info(
-              `LLM Evaluator recommended responding to the batch generally. Reason: ${evaluationResult.reason}`,
-            );
-            finalTargetMessage = null;
-          }
-        } else if (evaluationResult) {
-          loggerService.logger.info(
-            `LLM Evaluator decided not to respond to the batch. Reason: ${evaluationResult.reason}`,
-          );
-          shouldRespond = false;
-        } else {
-          loggerService.logger.error(
-            `LLM Evaluator failed to return a result for channel ${channelId}. Responding for testing purpose.`,
-          );
-          // Choose to respond for now - this will be tested and adjusted later
-          shouldRespond = true;
-        }
-        break;
-
-      case ScoreDecision.Discard:
-        loggerService.logger.info(
-          `Batch for channel ${channelId} scored low or was invalid. Discarding.`,
-        );
-        shouldRespond = false;
-        break;
+    const context = this.prepareConversationContext(channelId, messages);
+    if (!context) {
+      loggerService.logger.warn(
+        { channelId },
+        "Conversation context could not be prepared. Skipping batch.",
+      );
+      return;
     }
 
-    // 4. Generate and Send Response (if shouldRespond is true)
-    if (shouldRespond) {
-      // --- Get Persona, Prompt Template and Language Config for Responder ---
-      let systemPromptTemplate: string | undefined;
-      let personaDefinition: PersonaDefinition | undefined;
-      let personaDetails: string | undefined;
-      let languageConfig:
-        | { primary: string; fallback: string; autoDetect: boolean }
-        | undefined;
-      const firstMessage = messages.length > 0 ? messages[0] : null; // Safely get first message
+    let pendingProactiveSummaries = getPendingSummaries(channelId);
 
-      if (firstMessage?.guildId || firstMessage?.channelId) {
-        const serverId = firstMessage.guildId ?? firstMessage.channelId; // DMs don't have a guildId, so use the channelId
+    const evaluationEmotionSnapshots = emotionService.getSnapshots(
+      channelId,
+      context.personaDefinition,
+      context.candidateUserIds,
+      5,
+    );
 
-        // Get persona information
-        personaDefinition = configService.getPersonaDefinitionForContext(
-          serverId,
-          channelId,
-        );
-        const basePrompts = configService.getPersonaPrompts(); // Load base prompt templates
-        systemPromptTemplate = basePrompts?.systemPrompt;
-        personaDetails = personaDefinition?.details; // Get details from the resolved persona
+    let evaluationResult;
+    try {
+      evaluationResult = await llmEvaluatorService.evaluateMessages(
+        context.serverConfig?.responsiveness ?? 0.6,
+        context.evaluationPromptTemplate,
+        context.personaDefinition.details,
+        messages,
+        context.channelContextMessages,
+        evaluationEmotionSnapshots,
+        pendingProactiveSummaries,
+      );
+    } catch (error) {
+      loggerService.logger.error(
+        { channelId, err: error },
+        "Evaluator threw an error. Skipping batch.",
+      );
+      return;
+    }
 
-        // Get language configuration
-        activeServerConfig = configService.getServerConfig(serverId);
-        if (activeServerConfig.languageConfig) {
-          languageConfig = activeServerConfig.languageConfig;
-        } else {
-          // Use default from global config
-          const globalConfig = configService.getConfig();
-          if (globalConfig.language) {
-            languageConfig = {
-              primary: globalConfig.language.defaultPrimary,
-              fallback: globalConfig.language.defaultFallback,
-              autoDetect: globalConfig.language.autoDetectEnabled,
-            };
-          }
-        }
-      } else {
+    if (!evaluationResult) {
+      loggerService.logger.error(
+        { channelId },
+        "Evaluator returned null result. Skipping batch.",
+      );
+      return;
+    }
+
+    if (evaluationResult.emotionDeltas?.length) {
+      this.applyEmotionDeltas(
+        channelId,
+        context.personaDefinition,
+        evaluationResult.emotionDeltas,
+        "evaluator",
+      );
+    }
+
+    if (
+      evaluationResult.proactiveMessages?.length ||
+      evaluationResult.cancelScheduleIds?.length
+    ) {
+      this.processProactiveDirectives(
+        channelId,
+        context.personaDefinition,
+        evaluationResult.proactiveMessages,
+        evaluationResult.cancelScheduleIds,
+      );
+      pendingProactiveSummaries = getPendingSummaries(channelId);
+    }
+
+    if (!evaluationResult.should_respond) {
+      loggerService.logger.info(
+        { channelId, reason: evaluationResult.reason },
+        "Evaluator advised not to respond to this batch.",
+      );
+      return;
+    }
+
+    let finalTargetMessage: SimpleMessage | null = null;
+    if (evaluationResult.target_message_id) {
+      finalTargetMessage =
+        messages.find((msg) => msg.id === evaluationResult.target_message_id) ||
+        null;
+      if (!finalTargetMessage) {
         loggerService.logger.warn(
-          `Cannot determine guildId for response generation in channel ${channelId}. Cannot apply persona.`,
-        );
-        // Prevent response if we can't determine the server context
-        shouldRespond = false;
-      }
-
-      // Validate that we have everything needed to generate a response
-      if (!personaDefinition || !systemPromptTemplate || !personaDetails) {
-        loggerService.logger.error(
-          `Could not load necessary persona/prompt info for ${firstMessage?.guildId}/${channelId}. Cannot generate response.`,
-        );
-        shouldRespond = false; // Cannot respond without full info
-      }
-      // ----------------------------------------------------
-
-      // Proceed only if we still should respond after loading persona info
-      if (shouldRespond && systemPromptTemplate && personaDetails) {
-        // Double-check shouldRespond status
-        if (finalTargetMessage) {
-          loggerService.logger.debug(
-            `Generating response targeting message ${finalTargetMessage.id}...`,
-          );
-        } else {
-          loggerService.logger.debug(
-            `Generating general response for channel ${channelId} based on the latest context...`,
-          );
-        }
-
-        // Simulate typing before calling the potentially long-running LLM
-        try {
-          const channel = await this.client.channels.fetch(channelId);
-          if (channel instanceof TextChannel) {
-            await channel.sendTyping();
-          }
-        } catch (typingError) {
-          loggerService.logger.warn(
-            `Failed to send typing indicator to channel ${channelId}: ${typingError}`,
-          );
-        }
-
-        const configuredDelaySeconds =
-          activeServerConfig?.completionDelaySeconds ?? 3;
-        const completionDelaySeconds = Math.max(3, configuredDelaySeconds);
-        if (completionDelaySeconds > 0) {
-          await this.delay(completionDelaySeconds * 1000);
-          // Refresh typing indicator so the user sees continued activity.
-          try {
-            const channel = await this.client.channels.fetch(channelId);
-            if (channel instanceof TextChannel) {
-              await channel.sendTyping();
-            }
-          } catch (typingError) {
-            loggerService.logger.warn(
-              `Failed to refresh typing indicator after delay in channel ${channelId}: ${typingError}`,
-            );
-          }
-        }
-
-        let emotionSnapshotsForResponse: EmotionSnapshot[] | undefined;
-        const targetUserId = finalTargetMessage?.authorId;
-        if (personaDefinition) {
-          const snapshotUserIds = new Set<string>();
-          if (targetUserId) {
-            snapshotUserIds.add(targetUserId);
-          }
-          candidateUserIds.forEach((id) => snapshotUserIds.add(id));
-          emotionSnapshotsForResponse = emotionService.getSnapshots(
-            channelId,
-            personaDefinition,
-            Array.from(snapshotUserIds),
-            5,
-          );
-        }
-
-        // Pass the specific target message, template, details, and language config to the responder
-        const responseResult = await responderService.generateResponse(
-          channelId,
-          systemPromptTemplate,
-          personaDetails,
-          languageConfig,
-          finalTargetMessage ?? undefined,
           {
-            targetUserId,
-            snapshots: emotionSnapshotsForResponse,
-            deltaCaps: personaDefinition?.emotionDeltaCaps,
+            channelId,
+            messageId: evaluationResult.target_message_id,
           },
+          "Evaluator target message not found in current batch. Falling back to general response.",
         );
-
-        if (responseResult && responseResult.segments.length > 0) {
-          await this.enqueueResponseSegments(channelId, responseResult.segments);
-
-          if (responseResult.emotionDeltas?.length && personaDefinition) {
-            this.applyEmotionDeltas(
-              channelId,
-              personaDefinition,
-              responseResult.emotionDeltas,
-              "responder",
-            );
-          }
-
-          // --- Mark the target message as responded to ---
-          // If we had a specific target (from high score or LLM eval), mark it.
-          if (finalTargetMessage) {
-            contextManagerService.markMessageAsResponded(
-              channelId,
-              finalTargetMessage.id,
-            );
-          } else {
-            // If it was a general response (ScoreDecision.Respond without specific target,
-            // or LLM eval decided general response), we might not mark anything,
-            // or potentially mark the last message in the *original batch*?
-            // For now, let's only mark specifically targeted messages.
-            loggerService.logger.debug(
-              `General response sent for channel ${channelId}, no specific message marked as responded.`,
-            );
-          }
-          // ---------------------------------------------
-        } else {
-          loggerService.logger.warn(
-            `ResponderService did not generate a response for channel ${channelId}.`,
-          );
-        }
       }
+    }
+
+    await this.simulateTyping(
+      channelId,
+      context.serverConfig?.completionDelaySeconds,
+    );
+
+    const responseEmotionSnapshots = emotionService.getSnapshots(
+      channelId,
+      context.personaDefinition,
+      Array.from(
+        new Set(
+          [
+            ...context.candidateUserIds,
+            finalTargetMessage?.authorId ?? "",
+          ].filter((id) => id),
+        ),
+      ),
+      5,
+    );
+
+    let responseResult;
+    try {
+      responseResult = await responderService.generateResponse(
+        channelId,
+        context.systemPromptTemplate,
+        context.personaDefinition.details,
+        context.languageConfig,
+        finalTargetMessage ?? undefined,
+        {
+          targetUserId: finalTargetMessage?.authorId,
+          snapshots: responseEmotionSnapshots,
+          deltaCaps: context.personaDefinition.emotionDeltaCaps,
+          pendingProactiveMessages: pendingProactiveSummaries,
+        },
+      );
+    } catch (error) {
+      loggerService.logger.error(
+        { channelId, err: error },
+        "Responder threw an error. Skipping batch.",
+      );
+      return;
+    }
+
+    if (!responseResult) {
+      loggerService.logger.warn(
+        { channelId },
+        "ResponderService returned null result. Skipping batch.",
+      );
+      return;
+    }
+
+    if (responseResult.emotionDeltas?.length) {
+      this.applyEmotionDeltas(
+        channelId,
+        context.personaDefinition,
+        responseResult.emotionDeltas,
+        "responder",
+      );
+    }
+
+    if (
+      responseResult.proactiveMessages?.length ||
+      responseResult.cancelScheduleIds?.length
+    ) {
+      this.processProactiveDirectives(
+        channelId,
+        context.personaDefinition,
+        responseResult.proactiveMessages,
+        responseResult.cancelScheduleIds,
+      );
+      pendingProactiveSummaries = getPendingSummaries(channelId);
+    }
+
+    if (!responseResult.segments.length) {
+      loggerService.logger.warn(
+        { channelId },
+        "Responder returned empty segments. Nothing to send.",
+      );
+      return;
+    }
+
+    await this.enqueueResponseSegments(channelId, responseResult.segments);
+
+    if (finalTargetMessage) {
+      contextManagerService.markMessageAsResponded(
+        channelId,
+        finalTargetMessage.id,
+      );
     }
   }
 
- 
+  private prepareConversationContext(
+    channelId: string,
+    messages: SimpleMessage[],
+  ): ConversationContext | null {
+    if (messages.length === 0) {
+      return null;
+    }
+
+    const appConfig = configService.getConfig();
+    const contextSnapshot = contextManagerService.getContext(channelId);
+    const channelContextMessages = contextSnapshot?.messages ?? [];
+
+    const primaryMessage = messages[0];
+    const serverId = primaryMessage?.guildId ?? channelId;
+
+    let serverConfig: ServerConfig | null = null;
+    try {
+      serverConfig = configService.getServerConfig(serverId);
+    } catch (error) {
+      loggerService.logger.error(
+        { channelId, serverId, err: error },
+        "Failed to load server configuration for conversation context.",
+      );
+    }
+
+    const personaDefinition =
+      (serverConfig
+        ? configService.getPersonaDefinitionForContext(
+            serverConfig.serverId,
+            channelId,
+          )
+        : undefined) ?? configService.getPresetPersona("default");
+
+    if (!personaDefinition) {
+      loggerService.logger.error(
+        { channelId },
+        "Persona definition could not be resolved. Skipping batch.",
+      );
+      return null;
+    }
+
+    const personaPrompts = configService.getPersonaPrompts();
+    if (!personaPrompts) {
+      loggerService.logger.error(
+        { channelId },
+        "Persona prompt templates are not loaded. Skipping batch.",
+      );
+      return null;
+    }
+
+    const { systemPrompt, evaluationPrompt } = personaPrompts;
+    if (!systemPrompt || !evaluationPrompt) {
+      loggerService.logger.error(
+        { channelId },
+        "Persona prompt templates missing required fields. Skipping batch.",
+      );
+      return null;
+    }
+
+    const languageSource =
+      serverConfig?.languageConfig ??
+      (appConfig.language
+        ? {
+            primary: appConfig.language.defaultPrimary,
+            fallback: appConfig.language.defaultFallback,
+            autoDetect: appConfig.language.autoDetectEnabled,
+          }
+        : undefined);
+
+    const languageConfig = languageSource
+      ? {
+          primary: languageSource.primary,
+          fallback: languageSource.fallback,
+          autoDetect: languageSource.autoDetect,
+        }
+      : undefined;
+
+    const candidateUserIds = this.collectCandidateUserIds(
+      channelContextMessages,
+      messages,
+    );
+
+    return {
+      channelId,
+      messages,
+      serverConfig,
+      personaDefinition,
+      systemPromptTemplate: systemPrompt,
+      evaluationPromptTemplate: evaluationPrompt,
+      languageConfig,
+      channelContextMessages,
+      candidateUserIds,
+    };
+  }
+
+  private collectCandidateUserIds(
+    contextMessages: SimpleMessage[],
+    newMessages: SimpleMessage[],
+  ): string[] {
+    const ids = new Set<string>();
+    const recentContext = contextMessages.slice(-20);
+    const allMessages = [...recentContext, ...newMessages];
+
+    for (const message of allMessages) {
+      if (message.authorId && message.authorId !== this.botId) {
+        ids.add(message.authorId);
+      }
+      if (Array.isArray(message.mentionedUsers)) {
+        for (const mentioned of message.mentionedUsers) {
+          if (mentioned && mentioned !== this.botId) {
+            ids.add(mentioned);
+          }
+        }
+      }
+    }
+
+    return Array.from(ids).slice(0, 25);
+  }
+
+  private async simulateTyping(
+    channelId: string,
+    delaySeconds?: number,
+  ): Promise<void> {
+    const totalDelayMs = Math.max(
+      0,
+      Math.round((delaySeconds ?? 0) * 1000),
+    );
+
+    let sendableChannel: TextChannel | DMChannel | null = null;
+    try {
+      const fetchedChannel = await this.client.channels.fetch(channelId);
+      if (!fetchedChannel) {
+        loggerService.logger.debug(
+          { channelId },
+          "Failed to fetch channel for typing simulation.",
+        );
+        return;
+      }
+
+      if (fetchedChannel instanceof TextChannel) {
+        sendableChannel = fetchedChannel;
+      } else if (fetchedChannel instanceof DMChannel) {
+        sendableChannel = fetchedChannel;
+      }
+    } catch (error) {
+      loggerService.logger.debug(
+        { channelId, err: error },
+        "Error fetching channel for typing simulation.",
+      );
+      return;
+    }
+
+    if (!sendableChannel || typeof sendableChannel.sendTyping !== "function") {
+      return;
+    }
+
+    const start = Date.now();
+    const burstIntervalMs = 9000;
+
+    while (true) {
+      try {
+        await sendableChannel.sendTyping().catch(() => {});
+      } catch (error) {
+        loggerService.logger.debug(
+          { channelId, err: error },
+          "Failed to send typing indicator.",
+        );
+        break;
+      }
+
+      if (totalDelayMs === 0) {
+        break;
+      }
+
+      const elapsed = Date.now() - start;
+      const remaining = totalDelayMs - elapsed;
+      if (remaining <= 0) {
+        break;
+      }
+
+      await this.delay(Math.min(burstIntervalMs, remaining));
+    }
+  }
+
   private applyEmotionDeltas(
     channelId: string,
     personaDefinition: PersonaDefinition | undefined,
@@ -598,8 +643,173 @@ class BotClient {
       );
     });
   }
-  
- /**
+
+  private processProactiveDirectives(
+    channelId: string,
+    personaDefinition: PersonaDefinition | undefined,
+    drafts: ProactiveMessageDraft[] | undefined,
+    cancelIds: string[] | undefined,
+  ): void {
+    if (cancelIds && cancelIds.length > 0) {
+      cancelScheduledMessages(cancelIds.map((id) => id.toLowerCase()));
+      loggerService.logger.info(
+        { channelId, cancelIds },
+        "Cancelled scheduled proactive messages as requested by LLM.",
+      );
+    }
+
+    if (!drafts || drafts.length === 0) {
+      return;
+    }
+
+    if (!personaDefinition) {
+      loggerService.logger.warn(
+        { channelId },
+        "Cannot schedule proactive messages because persona definition is missing.",
+      );
+      return;
+    }
+
+    drafts.forEach((draft) => {
+      const timestamp = this.parseScheduleTimestamp(draft.sendAt);
+      if (timestamp === null) {
+        loggerService.logger.warn(
+          { channelId, value: draft.sendAt },
+          "Ignoring proactive draft with invalid send_at value.",
+        );
+        return;
+      }
+
+      if (draft.id) {
+        const existing = findProactiveMessage(draft.id);
+        if (existing) {
+          if (existing.channelId !== channelId) {
+            loggerService.logger.warn(
+              { channelId, id: draft.id, originalChannel: existing.channelId },
+              "Cannot reschedule proactive message; channel mismatch.",
+            );
+            return;
+          }
+          if (existing.status !== "scheduled") {
+            loggerService.logger.warn(
+              { channelId, id: draft.id, status: existing.status },
+              "Cannot reschedule proactive message that is not marked as scheduled.",
+            );
+            return;
+          }
+
+          try {
+            rescheduleExistingProactiveMessage(
+              draft.id,
+              timestamp,
+              draft.content,
+              draft.reason ?? null,
+            );
+            loggerService.logger.info(
+              { channelId, id: draft.id, sendAt: timestamp },
+              "Rescheduled proactive message.",
+            );
+          } catch (error) {
+            loggerService.logger.error(
+              { channelId, id: draft.id, err: error },
+              "Failed to reschedule proactive message.",
+            );
+          }
+          return;
+        }
+
+        loggerService.logger.info(
+          { channelId, id: draft.id },
+          "Proactive message id not found; scheduling as a new entry.",
+        );
+      }
+
+      try {
+        scheduleProactiveMessage({
+          channelId,
+          personaId: personaDefinition.id,
+          content: draft.content,
+          scheduledAt: timestamp,
+          reason: draft.reason,
+        });
+        loggerService.logger.info(
+          { channelId, sendAt: timestamp },
+          "Scheduled new proactive message.",
+        );
+      } catch (error) {
+        loggerService.logger.error(
+          { channelId, err: error },
+          "Failed to schedule proactive message.",
+        );
+      }
+    });
+  }
+
+  private parseScheduleTimestamp(value: string): number | null {
+    if (!value) {
+      return null;
+    }
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    return parsed;
+  }
+
+  private startProactiveDispatchLoop(): void {
+    if (this.proactiveInterval) {
+      return;
+    }
+    this.proactiveInterval = setInterval(() => {
+      this.dispatchDueProactiveMessages().catch((error) => {
+        loggerService.logger.error(
+          { err: error },
+          "Error while dispatching proactive messages.",
+        );
+      });
+    }, BotClient.PROACTIVE_DISPATCH_INTERVAL_MS);
+  }
+
+  private async dispatchDueProactiveMessages(): Promise<void> {
+    const due = getDueProactiveMessages(Date.now());
+    if (!due.length) {
+      return;
+    }
+
+    for (const { record } of due) {
+      try {
+        await this.sendProactiveRecord(record);
+        markProactiveMessageStatus(record.publicId, "sent");
+      } catch (error) {
+        loggerService.logger.error(
+          { err: error, record },
+          "Failed to send proactive message.",
+        );
+        markProactiveMessageStatus(record.publicId, "skipped");
+      }
+    }
+  }
+
+  private async sendProactiveRecord(
+    record: ChannelProactiveMessageRow,
+  ): Promise<void> {
+    const trimmed = record.content.trim();
+    if (!trimmed) {
+      throw new Error("Proactive message content is empty");
+    }
+
+    const segments: StructuredResponseSegment[] = [
+      {
+        sequence: 1,
+        delayMs: 0,
+        content: trimmed,
+      },
+    ];
+
+    await this.enqueueResponseSegments(record.channelId, segments);
+  }
+
+  /**
    * @description Sends a response message to a specific Discord channel and adds it to context.
    * @param channelId The ID of the target channel.
    * @param content The text content of the response.
@@ -771,6 +981,10 @@ class BotClient {
    */
   public async stop(): Promise<void> {
     loggerService.logger.info("Shutting down bot client...");
+    if (this.proactiveInterval) {
+      clearInterval(this.proactiveInterval);
+      this.proactiveInterval = null;
+    }
     // Flush any remaining messages in buffers
     await bufferQueueService.flushAll();
     // Flush context to disk

@@ -6,7 +6,6 @@ import dotenv from "dotenv";
 import loggerService from "@/logger"; // Import logger service instance
 import {
   AppConfig,
-  ScoringRules,
   PersonaPrompts,
   ServerConfig,
   PersonaDefinition,
@@ -28,7 +27,6 @@ class ConfigService {
   private static instance: ConfigService;
 
   private currentConfig: AppConfig | null = null;
-  private currentScoringRules: ScoringRules | null = null;
   private currentPersonaPrompts: PersonaPrompts | null = null; // Base prompt templates
   private serverConfigs: Map<string, ServerConfig> = new Map(); // Cache for server configs <serverId, ServerConfig>
   private presetPersonas: Map<string, PersonaDefinition> = new Map(); // Cache for preset personas <presetId, PersonaDefinition>
@@ -81,14 +79,6 @@ class ConfigService {
       throw new Error("Configuration not initialized.");
     }
     return this.currentConfig;
-  }
-
-  /**
-   * @description Gets the current scoring rules. Returns null if not loaded.
-   * @returns {ScoringRules | null} The current scoring rules object or null.
-   */
-  public getScoringRules(): ScoringRules | null {
-    return this.currentScoringRules;
   }
 
   /**
@@ -457,16 +447,6 @@ class ConfigService {
       // Decide if this is critical enough to exit? For now, just log.
     }
 
-    if (this.currentConfig.scoringRulesFile) {
-      this.currentScoringRules = this.loadScoringRules(
-        this.currentConfig.scoringRulesFile,
-      );
-    } else {
-      loggerService.logger.error(
-        "Scoring rules file path not defined in main config.",
-      );
-    }
-
     if (this.currentConfig.personaPromptFile) {
       this.currentPersonaPrompts = this.loadPersonaPrompts(
         this.currentConfig.personaPromptFile,
@@ -493,12 +473,6 @@ class ConfigService {
     this.fileWatchers = [];
 
     this.watchFile(this.mainConfigPath, this.reloadMainConfig.bind(this));
-    if (this.currentConfig?.scoringRulesFile) {
-      this.watchFile(
-        this.currentConfig.scoringRulesFile,
-        this.reloadScoringRules.bind(this),
-      );
-    }
     if (this.currentConfig?.personaPromptFile) {
       this.watchFile(
         this.currentConfig.personaPromptFile,
@@ -559,14 +533,6 @@ class ConfigService {
           parseInt(process.env.BUFFER_TIME_WINDOW_MS || "", 10) ||
           configFromFile.bufferTimeWindowMs ||
           2000,
-        scoreThresholdRespond:
-          parseInt(process.env.SCORE_THRESHOLD_RESPOND || "", 10) ||
-          configFromFile.scoreThresholdRespond ||
-          80,
-        scoreThresholdDiscard:
-          parseInt(process.env.SCORE_THRESHOLD_DISCARD || "", 10) ||
-          configFromFile.scoreThresholdDiscard ||
-          -10,
         contextMaxMessages:
           parseInt(process.env.CONTEXT_MAX_MESSAGES || "", 10) ||
           configFromFile.contextMaxMessages ||
@@ -584,9 +550,6 @@ class ConfigService {
         personaPromptFile:
           process.env.PERSONA_PROMPT_FILE_PATH ||
           configFromFile.personaPromptFile,
-        scoringRulesFile:
-          process.env.SCORING_RULES_FILE_PATH ||
-          configFromFile.scoringRulesFile,
         // serverDataPath is loaded directly from env var in constructor
         serverDataPath: this.serverDataPath, // Include the path loaded from env/default
 
@@ -610,7 +573,6 @@ class ConfigService {
         "secondaryLlmBaseUrl",
         "secondaryLlmModel",
         "personaPromptFile",
-        "scoringRulesFile",
         // serverDataPath is validated separately as it comes directly from env
       ];
       // Validate serverDataPath separately (must come from env or default)
@@ -638,29 +600,6 @@ class ConfigService {
     } catch (error: any) {
       loggerService.logger.error(
         `Error loading main config file (${filePath}): ${error.message}`,
-      );
-      return null;
-    }
-  }
-
-  private loadScoringRules(filePath: string): ScoringRules | null {
-    try {
-      loggerService.logger.info(
-        `Attempting to load scoring rules from: ${filePath}`,
-      );
-      if (!fs.existsSync(filePath)) {
-        loggerService.logger.error(
-          `Scoring rules file not found at: ${filePath}`,
-        );
-        return null;
-      }
-      const fileContents = fs.readFileSync(filePath, "utf8");
-      const rules = JSON.parse(fileContents) as ScoringRules;
-      loggerService.logger.info("Scoring rules loaded successfully.");
-      return rules;
-    } catch (error: any) {
-      loggerService.logger.error(
-        `Error loading scoring rules file (${filePath}): ${error.message}`,
       );
       return null;
     }
@@ -723,15 +662,6 @@ class ConfigService {
       }
       // Check if dependent file paths changed and reload/rewatch if necessary
       let rewatchNeeded = false;
-      if (oldConfig?.scoringRulesFile !== newConfig.scoringRulesFile) {
-        loggerService.logger.info(
-          "Scoring rules file path changed. Reloading rules.",
-        );
-        this.currentScoringRules = this.loadScoringRules(
-          newConfig.scoringRulesFile,
-        );
-        rewatchNeeded = true;
-      }
       if (oldConfig?.personaPromptFile !== newConfig.personaPromptFile) {
         loggerService.logger.info(
           "Persona prompt file path changed. Reloading prompts.",
@@ -752,22 +682,6 @@ class ConfigService {
       loggerService.logger.error(
         "Failed to reload main config. Keeping previous version.",
       );
-    }
-  }
-
-  private reloadScoringRules(): void {
-    if (this.currentConfig?.scoringRulesFile) {
-      const newRules = this.loadScoringRules(
-        this.currentConfig.scoringRulesFile,
-      );
-      if (newRules) {
-        this.currentScoringRules = newRules;
-        loggerService.logger.info("Scoring rules reloaded successfully.");
-      } else {
-        loggerService.logger.error(
-          "Failed to reload scoring rules. Keeping previous version.",
-        );
-      }
     }
   }
 

@@ -96,6 +96,35 @@ export const channelEmotions = sqliteTable(
   }),
 );
 
+export const channelProactiveMessages = sqliteTable(
+  "channel_proactive_messages",
+  {
+    id: integer("id", { mode: "number" }).primaryKey({ autoIncrement: true }),
+    publicId: text("public_id").notNull().unique(),
+    channelId: text("channel_id").notNull(),
+    personaId: text("persona_id").notNull(),
+    content: text("content").notNull(),
+    scheduledAt: integer("scheduled_at", { mode: "number" }).notNull(),
+    status: text("status").notNull().default("scheduled"),
+    reason: text("reason"),
+    metadata: text("metadata"),
+    createdAt: integer("created_at", { mode: "number" })
+      .notNull()
+      .default(sql`(strftime('%s','now') * 1000)`),
+    updatedAt: integer("updated_at", { mode: "number" })
+      .notNull()
+      .default(sql`(strftime('%s','now') * 1000)`),
+  },
+  (table) => ({
+    channelIdx: index("channel_proactive_messages_channel_idx").on(
+      table.channelId,
+    ),
+    scheduleIdx: index("channel_proactive_messages_schedule_idx").on(
+      table.scheduledAt,
+    ),
+  }),
+);
+
 export const channelMessages = sqliteTable(
   "channel_messages",
   {
@@ -256,4 +285,6 @@ export type ChannelRow = typeof channels.$inferSelect;
 export type ChannelStateRow = typeof channelState.$inferSelect;
 export type ChannelMessageRow = typeof channelMessages.$inferSelect;
 export type ChannelEmotionRow = typeof channelEmotions.$inferSelect;
+export type ChannelProactiveMessageRow =
+  typeof channelProactiveMessages.$inferSelect;
 export type PersonaRow = typeof personas.$inferSelect;

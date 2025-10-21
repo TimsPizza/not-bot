@@ -6,6 +6,7 @@ import {
   MessageBatch,
   EmotionSnapshot,
   EmotionMetric,
+  ProactiveMessageSummary,
 } from "@/types";
 
 export interface ResponsePromptContext {
@@ -19,6 +20,7 @@ export interface ResponsePromptContext {
   targetUserId?: string;
   emotionSnapshots?: EmotionSnapshot[];
   emotionDeltaCaps?: Partial<Record<EmotionMetric, number>>;
+  pendingProactiveMessages?: ProactiveMessageSummary[];
 }
 
 export interface EvaluationPromptContext {
@@ -29,6 +31,7 @@ export interface EvaluationPromptContext {
   batchMessages: SimpleMessage[];
   contextLookback?: number;
   emotionSnapshots?: EmotionSnapshot[];
+  pendingProactiveMessages?: ProactiveMessageSummary[];
 }
 
 export interface SummaryPromptContext {

@@ -8,6 +8,8 @@ import {
   EmotionMetric,
   EmotionSnapshot,
   LLMEvaluationResult,
+  ProactiveMessageDraft,
+  ProactiveMessageSummary,
   SimpleMessage,
 } from "@/types";
 import { jsonrepair } from "jsonrepair";
@@ -54,6 +56,7 @@ class LLMEvaluatorService {
     batchMessages: SimpleMessage[],
     channelContextMessages: SimpleMessage[],
     emotionSnapshots?: EmotionSnapshot[],
+    pendingProactiveMessages?: ProactiveMessageSummary[],
   ): Promise<LLMEvaluationResult | null> {
     // --- Calculate Effective Threshold ---
     const BASE_RESPONSE_THRESHOLD = 0.35; // Base score needed to consider responding
@@ -93,6 +96,7 @@ class LLMEvaluatorService {
         channelContextMessages,
         batchMessages,
         emotionSnapshots,
+        pendingProactiveMessages,
       });
 
       const firstMessageContent = prompt.messages[0]?.content;
@@ -181,6 +185,18 @@ class LLMEvaluatorService {
         result.emotionDeltas = emotionDeltas;
       }
 
+      const proactiveDeltas = parseProactiveMessagesArray(
+        parsedJson.proactive_messages,
+      );
+      if (proactiveDeltas.length > 0) {
+        result.proactiveMessages = proactiveDeltas;
+      }
+
+      const cancelScheduleIds = parseCancelIds(parsedJson.cancel_schedule_ids);
+      if (cancelScheduleIds.length > 0) {
+        result.cancelScheduleIds = cancelScheduleIds;
+      }
+
       // Ensure target_message_id is null if score is below the effective threshold
       if (
         result.response_score < effectiveThreshold &&
@@ -260,6 +276,52 @@ function parseEmotionDeltaArray(
   });
 
   return deltas;
+}
+
+function parseProactiveMessagesArray(
+  input: unknown,
+): ProactiveMessageDraft[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const drafts: ProactiveMessageDraft[] = [];
+  input.forEach((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const sendAt = (entry as { send_at?: unknown }).send_at;
+    const content = (entry as { content?: unknown }).content;
+    if (typeof sendAt !== "string" || typeof content !== "string") {
+      return;
+    }
+    const idValue = (entry as { id?: unknown }).id;
+    const reason = (entry as { reason?: unknown }).reason;
+    const draft: ProactiveMessageDraft = {
+      sendAt,
+      content,
+    };
+    if (typeof idValue === "string" && idValue.trim().length > 0) {
+      draft.id = idValue.trim().toLowerCase();
+    }
+    if (typeof reason === "string" && reason.trim().length > 0) {
+      draft.reason = reason.trim();
+    }
+    drafts.push(draft);
+  });
+
+  return drafts;
+}
+
+function parseCancelIds(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .map((value) =>
+      typeof value === "string" ? value.trim().toLowerCase() : null,
+    )
+    .filter((value): value is string => Boolean(value));
 }
 
 // Export the singleton instance directly

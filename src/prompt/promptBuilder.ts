@@ -3,6 +3,7 @@ import {
   EmotionSnapshot,
   PersonaPrompts,
   SimpleMessage,
+  ProactiveMessageSummary,
 } from "@/types";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { renderTemplate } from "./template";
@@ -104,6 +105,7 @@ function buildResponsePrompt(context: ResponsePromptContext): BuiltPrompt {
     targetUserId,
     emotionSnapshots,
     emotionDeltaCaps,
+    pendingProactiveMessages,
   } = context;
 
   const languageInstruction = determineResponseLanguageInstruction(
@@ -132,6 +134,13 @@ function buildResponsePrompt(context: ResponsePromptContext): BuiltPrompt {
         emotionSnapshots,
         targetUserId ?? targetMessage?.authorId ?? null,
       ),
+    });
+  }
+
+  if (pendingProactiveMessages && pendingProactiveMessages.length > 0) {
+    messages.push({
+      role: "system",
+      content: buildPendingProactiveMessageBlock(pendingProactiveMessages),
     });
   }
 
@@ -223,6 +232,24 @@ function buildEmotionGuidanceMessage(
   return lines.join("\n");
 }
 
+function buildPendingProactiveMessageBlock(
+  messages: ProactiveMessageSummary[],
+): string {
+  const lines: string[] = [];
+  lines.push(
+    "Scheduled proactive messages: review and decide whether to keep or cancel the following:",
+  );
+  messages.forEach((pending, index) => {
+    lines.push(
+      `${index + 1}. ID=${pending.id} | window=${new Date(pending.scheduledAt).toISOString()} | status=${pending.status} | preview=${pending.contentPreview}`,
+    );
+  });
+  lines.push(
+    "If any entry is no longer appropriate, add its ID to `cancel_schedule_ids` in your JSON output. To schedule new proactive content, add items to `proactive_messages`.",
+  );
+  return lines.join("\n");
+}
+
 function buildEvaluationEmotionMessage(
   snapshots: EmotionSnapshot[],
 ): string {
@@ -246,6 +273,7 @@ function buildResponseOutputInstruction(
     const cap = deltaCaps?.[metric] ?? OUTPUT_DELTA_BOUND;
     return `${metric}: ±${cap}`;
   }).join(", ");
+  const exampleSendAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   return [
     "You must return a strict JSON object with the following structure:",
@@ -256,13 +284,19 @@ function buildResponseOutputInstruction(
     "  ],",
     '  "emotion_delta": [',
     '    {"user_id": "...", "metric": "affinity", "delta": 3, "reason": "..."}',
-    "  ]",
+    "  ],",
+    '  "proactive_messages": [',
+    `    {"id": "opt_existing_id", "send_at": "${exampleSendAt}", "content": "...", "reason": "context"}`,
+    "  ],",
+    '  "cancel_schedule_ids": ["abc12"]',
     "}",
     "```",
     "- `messages` is required. It must be a non-empty array; each item needs `sequence` (integer starting at 1), `delay_ms` (non-negative integer), and `content` (string).",
     "- `emotion_delta` is optional. Only include entries when you need to adjust emotions. Each entry requires `user_id`, `metric` (affinity|annoyance|trust|curiosity), and `delta` (integer). Keep each delta within [-12, 12]; avoid excessive adjustments. Persona-recommended max per update: " +
       capText +
       ".",
+    "- `proactive_messages` is optional. Include entries to schedule new proactive sends or update existing ones (provide `id` when modifying). Each entry must include `send_at` (ISO 8601 UTC timestamp) and `content`, plus optional `reason`.",
+    "- `cancel_schedule_ids` is optional. Provide an array of existing proactive IDs that should be cancelled.",
     "- Do not add any extra text outside the JSON object.",
   ].join("\n");
 }
@@ -316,6 +350,7 @@ function buildEvaluationPrompt(context: EvaluationPromptContext): BuiltPrompt {
     batchMessages,
     contextLookback = 10,
     emotionSnapshots,
+    pendingProactiveMessages,
   } = context;
 
   const resolvedPrompt = renderTemplate(evaluationPromptTemplate, {
@@ -343,10 +378,17 @@ function buildEvaluationPrompt(context: EvaluationPromptContext): BuiltPrompt {
     });
   }
 
+  if (pendingProactiveMessages && pendingProactiveMessages.length > 0) {
+    messages.push({
+      role: "system",
+      content: buildPendingProactiveMessageBlock(pendingProactiveMessages),
+    });
+  }
+
   messages.push({
     role: "system",
     content:
-      "Return a strict JSON object with keys `response_score` (0.0-1.0 float), `target_message_id` (string or null), `reason` (string), `should_respond` (boolean), and optional `emotion_delta` array. Each element in `emotion_delta` must include `user_id` (string), `metric` (one of affinity|annoyance|trust|curiosity), `delta` (integer bounded within [-12, 12]), and optional `reason`. When no emotional adjustment is needed, omit `emotion_delta` or use an empty array.",
+      "Return a strict JSON object with keys `response_score` (0.0-1.0 float), `target_message_id` (string or null), `reason` (string), `should_respond` (boolean), and optional arrays `emotion_delta`, `proactive_messages`, plus optional `cancel_schedule_ids`. `emotion_delta` entries must include `user_id` (string), `metric` (affinity|annoyance|trust|curiosity), `delta` (integer within [-12,12]), and optional `reason`. `proactive_messages` entries may include `id` (existing scheduled id or omit for new), `send_at` (ISO 8601 UTC timestamp), `content`, and optional `reason`. Use `cancel_schedule_ids` to list any scheduled proactive ids that should be removed. Omit arrays when not needed.",
   });
 
   return {
