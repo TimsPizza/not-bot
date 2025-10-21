@@ -19,7 +19,7 @@ class BufferQueueService {
   private timers = new Map<string, NodeJS.Timeout>();
 
   private bufferSize: number = 10; // Default
-  private bufferTimeWindowMs: number = 5000; // Default
+  private bufferTimeWindowMs: number = 10000; // Default
   private maxBufferTimeWindowMs: number = 60000; // Adaptive cap for flush timer
   private backoffMultiplier = 1.6;
   private flushCallback: FlushCallback | null = null; // Callback to trigger evaluation/response pipeline
