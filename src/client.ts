@@ -63,6 +63,8 @@ class BotClient {
   private botId: string | null = null;
   private responseQueues: Map<string, Promise<void>> = new Map();
   private proactiveInterval: NodeJS.Timeout | null = null;
+  private processingChannels: Set<string> = new Set();
+  private deferredChannelBatches: Map<string, SimpleMessage[]> = new Map();
 
   constructor() {
     const config = configService.getConfig(); // Assuming config is loaded synchronously
@@ -229,189 +231,240 @@ class BotClient {
       return;
     }
 
-    loggerService.logger.info(
-      `Processing batch of ${messages.length} messages for channel ${channelId}`,
-    );
-
-    const context = this.prepareConversationContext(channelId, messages);
-    if (!context) {
-      loggerService.logger.warn(
-        { channelId },
-        "Conversation context could not be prepared. Skipping batch.",
+    if (this.processingChannels.has(channelId)) {
+      const pending = this.deferredChannelBatches.get(channelId) ?? [];
+      this.deferredChannelBatches.set(channelId, [...pending, ...messages]);
+      loggerService.logger.debug(
+        {
+          channelId,
+          pendingBatchSize: this.deferredChannelBatches.get(channelId)?.length,
+        },
+        "Channel pipeline busy; deferring message batch.",
       );
       return;
     }
 
-    let pendingProactiveSummaries = getPendingSummaries(channelId);
+    this.processingChannels.add(channelId);
 
-    const evaluationEmotionSnapshots = emotionService.getSnapshots(
-      channelId,
-      context.personaDefinition,
-      context.candidateUserIds,
-      5,
-    );
-
-    let evaluationResult;
     try {
-      evaluationResult = await llmEvaluatorService.evaluateMessages(
-        context.serverConfig?.responsiveness ?? 0.6,
-        context.evaluationPromptTemplate,
-        context.personaDefinition.details,
-        messages,
-        context.channelContextMessages,
-        evaluationEmotionSnapshots,
-        pendingProactiveSummaries,
-      );
-    } catch (error) {
-      loggerService.logger.error(
-        { channelId, err: error },
-        "Evaluator threw an error. Skipping batch.",
-      );
-      return;
-    }
-
-    if (!evaluationResult) {
-      loggerService.logger.error(
-        { channelId },
-        "Evaluator returned null result. Skipping batch.",
-      );
-      return;
-    }
-
-    if (evaluationResult.emotionDeltas?.length) {
-      this.applyEmotionDeltas(
-        channelId,
-        context.personaDefinition,
-        evaluationResult.emotionDeltas,
-        "evaluator",
-      );
-    }
-
-    if (
-      evaluationResult.proactiveMessages?.length ||
-      evaluationResult.cancelScheduleIds?.length
-    ) {
-      this.processProactiveDirectives(
-        channelId,
-        context.personaDefinition,
-        evaluationResult.proactiveMessages,
-        evaluationResult.cancelScheduleIds,
-      );
-      pendingProactiveSummaries = getPendingSummaries(channelId);
-    }
-
-    if (!evaluationResult.should_respond) {
       loggerService.logger.info(
-        { channelId, reason: evaluationResult.reason },
-        "Evaluator advised not to respond to this batch.",
+        `Processing batch of ${messages.length} messages for channel ${channelId}`,
       );
-      return;
-    }
 
-    let finalTargetMessage: SimpleMessage | null = null;
-    if (evaluationResult.target_message_id) {
-      finalTargetMessage =
-        messages.find((msg) => msg.id === evaluationResult.target_message_id) ||
-        null;
-      if (!finalTargetMessage) {
+      const context = this.prepareConversationContext(channelId, messages);
+      if (!context) {
         loggerService.logger.warn(
-          {
+          { channelId },
+          "Conversation context could not be prepared. Skipping batch.",
+        );
+        return;
+      }
+
+      const isDirectMessage = !messages[0]?.guildId;
+      let pendingProactiveSummaries = getPendingSummaries(channelId);
+      let evaluationResult = null as Awaited<
+        ReturnType<typeof llmEvaluatorService.evaluateMessages>
+      >;
+
+      if (!isDirectMessage) {
+        const evaluationEmotionSnapshots = emotionService.getSnapshots(
+          channelId,
+          context.personaDefinition,
+          context.candidateUserIds,
+          5,
+        );
+
+        try {
+          evaluationResult = await llmEvaluatorService.evaluateMessages(
+            context.serverConfig?.responsiveness ?? 0.6,
+            context.evaluationPromptTemplate,
+            context.personaDefinition.details,
+            messages,
+            context.channelContextMessages,
+            evaluationEmotionSnapshots,
+            pendingProactiveSummaries,
+          );
+        } catch (error) {
+          loggerService.logger.error(
+            { channelId, err: error },
+            "Evaluator threw an error. Skipping batch.",
+          );
+          return;
+        }
+
+        if (!evaluationResult) {
+          loggerService.logger.error(
+            { channelId },
+            "Evaluator returned null result. Skipping batch.",
+          );
+          return;
+        }
+
+        if (evaluationResult.emotionDeltas?.length) {
+          this.applyEmotionDeltas(
             channelId,
-            messageId: evaluationResult.target_message_id,
-          },
-          "Evaluator target message not found in current batch. Falling back to general response.",
+            context.personaDefinition,
+            evaluationResult.emotionDeltas,
+            "evaluator",
+          );
+        }
+
+        if (
+          evaluationResult.proactiveMessages?.length ||
+          evaluationResult.cancelScheduleIds?.length
+        ) {
+          this.processProactiveDirectives(
+            channelId,
+            context.personaDefinition,
+            evaluationResult.proactiveMessages,
+            evaluationResult.cancelScheduleIds,
+          );
+          pendingProactiveSummaries = getPendingSummaries(channelId);
+        }
+
+        if (!evaluationResult.should_respond) {
+          loggerService.logger.info(
+            { channelId, reason: evaluationResult.reason },
+            "Evaluator advised not to respond to this batch.",
+          );
+          return;
+        }
+      } else {
+        loggerService.logger.debug(
+          { channelId },
+          "Direct message batch detected; bypassing evaluator.",
         );
       }
-    }
 
-    await this.simulateTyping(
-      channelId,
-      context.serverConfig?.completionDelaySeconds,
-    );
+      let finalTargetMessage: SimpleMessage | null =
+        messages[messages.length - 1] ?? null;
+      if (evaluationResult?.target_message_id) {
+        const targeted =
+          messages.find((msg) => msg.id === evaluationResult.target_message_id) ||
+          null;
+        if (!targeted) {
+          loggerService.logger.warn(
+            {
+              channelId,
+              messageId: evaluationResult.target_message_id,
+            },
+            "Evaluator target message not found in current batch. Falling back to latest message.",
+          );
+        } else {
+          finalTargetMessage = targeted;
+        }
+      }
 
-    const responseEmotionSnapshots = emotionService.getSnapshots(
-      channelId,
-      context.personaDefinition,
-      Array.from(
-        new Set(
-          [
-            ...context.candidateUserIds,
-            finalTargetMessage?.authorId ?? "",
-          ].filter((id) => id),
+      await this.simulateTyping(
+        channelId,
+        context.serverConfig?.completionDelaySeconds,
+      );
+
+      const responseEmotionSnapshots = emotionService.getSnapshots(
+        channelId,
+        context.personaDefinition,
+        Array.from(
+          new Set(
+            [
+              ...context.candidateUserIds,
+              finalTargetMessage?.authorId ?? "",
+            ].filter((id) => id),
+          ),
         ),
-      ),
-      5,
-    );
+        5,
+      );
 
-    let responseResult;
-    try {
-      responseResult = await responderService.generateResponse(
-        channelId,
-        context.systemPromptTemplate,
-        context.personaDefinition.details,
-        context.languageConfig,
-        finalTargetMessage ?? undefined,
-        {
-          targetUserId: finalTargetMessage?.authorId,
-          snapshots: responseEmotionSnapshots,
-          deltaCaps: context.personaDefinition.emotionDeltaCaps,
-          pendingProactiveMessages: pendingProactiveSummaries,
-        },
-      );
-    } catch (error) {
-      loggerService.logger.error(
-        { channelId, err: error },
-        "Responder threw an error. Skipping batch.",
-      );
+      let responseResult;
+      try {
+        responseResult = await responderService.generateResponse(
+          channelId,
+          context.systemPromptTemplate,
+          context.personaDefinition.details,
+          context.languageConfig,
+          finalTargetMessage ?? undefined,
+          {
+            targetUserId: finalTargetMessage?.authorId,
+            snapshots: responseEmotionSnapshots,
+            deltaCaps: context.personaDefinition.emotionDeltaCaps,
+            pendingProactiveMessages: pendingProactiveSummaries,
+          },
+        );
+      } catch (error) {
+        loggerService.logger.error(
+          { channelId, err: error },
+          "Responder threw an error. Skipping batch.",
+        );
+        return;
+      }
+
+      if (!responseResult) {
+        loggerService.logger.warn(
+          { channelId },
+          "ResponderService returned null result. Skipping batch.",
+        );
+        return;
+      }
+
+      if (responseResult.emotionDeltas?.length) {
+        this.applyEmotionDeltas(
+          channelId,
+          context.personaDefinition,
+          responseResult.emotionDeltas,
+          "responder",
+        );
+      }
+
+      if (
+        responseResult.proactiveMessages?.length ||
+        responseResult.cancelScheduleIds?.length
+      ) {
+        this.processProactiveDirectives(
+          channelId,
+          context.personaDefinition,
+          responseResult.proactiveMessages,
+          responseResult.cancelScheduleIds,
+        );
+        pendingProactiveSummaries = getPendingSummaries(channelId);
+      }
+
+      if (!responseResult.segments.length) {
+        loggerService.logger.warn(
+          { channelId },
+          "Responder returned empty segments. Nothing to send.",
+        );
+        return;
+      }
+
+      await this.enqueueResponseSegments(channelId, responseResult.segments);
+
+      if (finalTargetMessage) {
+        contextManagerService.markMessageAsResponded(
+          channelId,
+          finalTargetMessage.id,
+        );
+      }
+    } finally {
+      this.finalizeChannelProcessing(channelId);
+    }
+  }
+
+  private finalizeChannelProcessing(channelId: string): void {
+    this.processingChannels.delete(channelId);
+    const deferred = this.deferredChannelBatches.get(channelId);
+    if (!deferred || deferred.length === 0) {
+      this.deferredChannelBatches.delete(channelId);
       return;
     }
 
-    if (!responseResult) {
-      loggerService.logger.warn(
-        { channelId },
-        "ResponderService returned null result. Skipping batch.",
-      );
-      return;
-    }
-
-    if (responseResult.emotionDeltas?.length) {
-      this.applyEmotionDeltas(
-        channelId,
-        context.personaDefinition,
-        responseResult.emotionDeltas,
-        "responder",
-      );
-    }
-
-    if (
-      responseResult.proactiveMessages?.length ||
-      responseResult.cancelScheduleIds?.length
-    ) {
-      this.processProactiveDirectives(
-        channelId,
-        context.personaDefinition,
-        responseResult.proactiveMessages,
-        responseResult.cancelScheduleIds,
-      );
-      pendingProactiveSummaries = getPendingSummaries(channelId);
-    }
-
-    if (!responseResult.segments.length) {
-      loggerService.logger.warn(
-        { channelId },
-        "Responder returned empty segments. Nothing to send.",
-      );
-      return;
-    }
-
-    await this.enqueueResponseSegments(channelId, responseResult.segments);
-
-    if (finalTargetMessage) {
-      contextManagerService.markMessageAsResponded(
-        channelId,
-        finalTargetMessage.id,
-      );
-    }
+    this.deferredChannelBatches.delete(channelId);
+    setImmediate(() => {
+      this.processMessageBatch(channelId, deferred).catch((error) => {
+        loggerService.logger.error(
+          { channelId, err: error },
+          "Deferred batch processing failed.",
+        );
+      });
+    });
   }
 
   private prepareConversationContext(
@@ -428,14 +481,22 @@ class BotClient {
 
     const primaryMessage = messages[0];
     const serverId = primaryMessage?.guildId ?? channelId;
+    const isDirectMessage = !primaryMessage?.guildId;
 
     let serverConfig: ServerConfig | null = null;
-    try {
-      serverConfig = configService.getServerConfig(serverId);
-    } catch (error) {
-      loggerService.logger.error(
-        { channelId, serverId, err: error },
-        "Failed to load server configuration for conversation context.",
+    if (!isDirectMessage) {
+      try {
+        serverConfig = configService.getServerConfig(serverId);
+      } catch (error) {
+        loggerService.logger.error(
+          { channelId, serverId, err: error },
+          "Failed to load server configuration for conversation context.",
+        );
+      }
+    } else {
+      loggerService.logger.trace(
+        { channelId },
+        "Direct message context prepared without server configuration lookup.",
       );
     }
 

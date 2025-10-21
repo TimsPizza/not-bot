@@ -1,6 +1,6 @@
 // src/buffer/index.ts
-import loggerService from "@/logger";
 import configService from "@/config";
+import loggerService from "@/logger";
 import { SimpleMessage } from "@/types";
 // Import ScorerService later when it's created
 // import scorerService from '@/scorer';
@@ -20,13 +20,20 @@ class BufferQueueService {
 
   private bufferSize: number = 10; // Default
   private bufferTimeWindowMs: number = 5000; // Default
+  private maxBufferTimeWindowMs: number = 60000; // Adaptive cap for flush timer
+  private backoffMultiplier = 1.6;
   private flushCallback: FlushCallback | null = null; // Callback to trigger evaluation/response pipeline
+  private dynamicWindows = new Map<string, number>();
 
   private constructor() {
     try {
       const config = configService.getConfig();
       this.bufferSize = config.bufferSize;
       this.bufferTimeWindowMs = config.bufferTimeWindowMs;
+      this.maxBufferTimeWindowMs = Math.max(
+        this.bufferTimeWindowMs,
+        Math.min(this.bufferTimeWindowMs * 8, 60000),
+      );
       loggerService.logger.info("BufferQueueService initialized.");
       // TODO: Add listener for config changes to update bufferSize/bufferTimeWindowMs?
     } catch (error) {
@@ -92,7 +99,8 @@ class BufferQueueService {
       this.flush(channelId); // Flush immediately, this also clears the timer
     } else {
       // Reset the timer for this channel
-      this.resetTimer(channelId);
+      const windowMs = this.calculateWindowMs(channelId, channelBuffer.length);
+      this.resetTimer(channelId, windowMs);
     }
   }
 
@@ -100,7 +108,7 @@ class BufferQueueService {
    * @description Resets the flush timer for a given channel.
    * @param channelId The ID of the channel.
    */
-  private resetTimer(channelId: string): void {
+  private resetTimer(channelId: string, windowMs: number): void {
     // Clear existing timer if any
     const existingTimer = this.timers.get(channelId);
     if (existingTimer) {
@@ -113,9 +121,28 @@ class BufferQueueService {
         `Buffer time window expired for channel ${channelId}. Flushing.`,
       );
       this.flush(channelId);
-    }, this.bufferTimeWindowMs);
+    }, windowMs);
 
     this.timers.set(channelId, newTimer);
+  }
+
+  private calculateWindowMs(channelId: string, bufferLength: number): number {
+    if (bufferLength <= 1) {
+      this.dynamicWindows.delete(channelId);
+      return this.bufferTimeWindowMs;
+    }
+
+    const window = Math.min(
+      this.bufferTimeWindowMs *
+        Math.pow(this.backoffMultiplier, bufferLength - 1),
+      this.maxBufferTimeWindowMs,
+    );
+    this.dynamicWindows.set(channelId, window);
+    loggerService.logger.debug(
+      { channelId, bufferLength, windowMs: window },
+      "Adaptive buffer window applied.",
+    );
+    return window;
   }
 
   /**
@@ -137,6 +164,7 @@ class BufferQueueService {
       // Get messages and clear buffer *before* async callback
       const messagesToFlush = [...channelBuffer];
       this.buffer.set(channelId, []); // Clear buffer immediately
+      this.dynamicWindows.delete(channelId);
       loggerService.logger.info(
         `Flushing ${messagesToFlush.length} messages for channel ${channelId}.`,
       );
