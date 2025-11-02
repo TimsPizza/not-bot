@@ -364,7 +364,7 @@ export function ensureServerConfig(serverId: string): ServerConfig {
       autoDetect: true,
     },
     summarySettings: {
-      enabled: false,
+      enabled: true,
       maxMessagesPerSummary: 50,
       cooldownSeconds: 0,
       allowedRoles: [],
