@@ -4,6 +4,7 @@
 # This is the base template. {{PERSONA_DETAILS}} will be replaced by the specific persona definition.
 # {{LANGUAGE_INSTRUCTION}} will be replaced by language-specific instructions.
 systemPrompt: |
+  /no_think
   {{PERSONA_DETAILS}}
 
   {{LANGUAGE_INSTRUCTION}}
@@ -25,6 +26,7 @@ systemPrompt: |
 # --- LLM Evaluation Prompt (Template) ---
 # This is the base template. {{PERSONA_DETAILS}} can be used if needed, though currently it focuses on general evaluation criteria.
 evaluationPrompt: |
+  /no_think
   You are a message evaluation assistant. Your task is to analyze a batch of Discord messages and determine **whether any of them are worth a response** from an AI chatbot named **"不是Bot"** ("NotBot"). If at least one message is worth responding to, you must pick **the single most suitable one** and explain why. Your evaluation should consider the following persona for the bot:
 
   ### BOT PERSONA DETAILS
@@ -102,7 +104,6 @@ evaluationPrompt: |
   {{MESSAGES_JSON}}
   ```
 
-
 # Language-related instruction templates
 language_instructions:
   # Auto-detect language instruction
@@ -110,12 +111,12 @@ language_instructions:
     *EXTREMELY IMPORTANT* Automatically detect the language used in the chat context and respond in the corresponding language.
     If the context contains multiple languages, prioritize the language of the most recent messages.
     If the language cannot be determined, default to English.
-  
+
   specific_language: |
     *EXTREMELY IMPORTANT* Please respond primarily in {{LANGUAGE_NAME}}.
     Even if the context contains messages in other languages, stick to using the specified language.
     If you cannot use the primary language, use {{FALLBACK_NAME}} as the fallback language.
-  
+
   # 各语言的自然回复指令
   language_styles:
     zh: "使用自然、友好的中文进行回复，符合中文表达习惯"
@@ -132,36 +133,37 @@ language_instructions:
 summary_prompts:
   # 基础总结模板
   basic_summary: |
-    你是一个专业的聊天记录总结助手。请分析以下Discord频道的聊天记录，并提供一个清晰、有用的总结。
+    /no_think
+    You are a professional conversation summarization assistant. Analyze the following Discord channel messages and produce a clear, useful summary.
 
-    **总结要求：**
-    1. 使用{{target_language}}进行总结
-    2. 提取主要话题和关键信息
-    3. 保持客观中性的语调
-    4. 重点关注有价值的讨论内容
-    5. 忽略无关的闲聊或系统消息
-    6. 如果涉及敏感内容，请谨慎处理
-    7. **重要** 在总结中提到具体用户时，请使用提供的Discord mention格式（如<@123456789>）
+    **Summary Requirements:**
+    1. Write the summary in **{{target_language}}**
+    2. Extract the **main topics** and **key information**
+    3. Maintain an **objective and neutral tone**
+    4. Focus on **meaningful or valuable discussions**
+    5. Ignore **irrelevant small talk** or **system-generated messages**
+    6. Handle **sensitive content** with care and discretion
+    7. **Important:** When referring to specific users, use the provided Discord mention format (e.g., `<@123456789>`)
 
     {{language_instruction}}
 
-    **聊天记录：**
+    **Chat Log:**
     {{messages_content}}
 
-    **总结方向：** {{summary_direction}}
-    **消息数量：** {{message_count}}条
-    **时间范围：** {{time_range}}
+    **Summary Focus:** {{summary_direction}}
+    **Message Count:** {{message_count}}
+    **Time Range:** {{time_range}}
 
-    请提供一个结构化的总结，包含：
-    - 📋 主要话题
-    - 💬 关键讨论点
-    - 🎯 重要结论或决定
-    - 📌 需要关注的事项（如有）
+    Please output a **well-structured summary** including:
+    - 📋 **Main Topics**
+    - 💬 **Key Discussion Points**
+    - 🎯 **Important Conclusions or Decisions**
+    - 📌 **Action Items / Points to Follow Up On** (if any)
 
   # 不同方向的总结指令
   direction_instructions:
     forward: "总结从指定消息开始之后的对话发展"
-    backward: "总结导致指定消息产生的之前讨论内容" 
+    backward: "总结导致指定消息产生的之前讨论内容"
     around: "总结围绕指定消息前后的完整讨论过程"
 
   # 语言特定的总结风格
@@ -187,7 +189,7 @@ summary_prompts:
       - 增加消息数量
       - 选择包含更多讨论内容的时间段
       - 检查是否选择了正确的消息起点
-    
+
     no_meaningful_content: |
       {{language_instruction}}
       在指定的消息范围内没有发现有意义的讨论内容。
@@ -197,10 +199,10 @@ summary_prompts:
 language_detection:
   detect_language_prompt: |
     请检测以下文本的主要语言，并返回对应的语言代码：
-    
+
     文本内容：
     {{text_content}}
-    
+
     请只返回语言代码（如：zh, en, ja, ko, es, fr, de, ru, pt），不要包含其他内容。
     如果包含多种语言，返回占比最大的语言代码。
     如果无法确定，返回 "en"。
@@ -208,7 +210,7 @@ language_detection:
 # 修改现有的system_prompt以支持语言变量
 system_prompt: |
   {{base_instructions}}
-  
+
   {{#if language_config}}
   {{#if language_config.auto_detect}}
   {{language_instructions.auto_detect}}
@@ -217,12 +219,12 @@ system_prompt: |
   {{language_instructions.language_styles.[language_config.primary]}}
   {{/if}}
   {{/if}}
-  
+
   {{persona_instructions}}
-  
+
   Current time: {{current_time}}
   {{#if context}}
-  
+
   Recent conversation context:
   {{context}}
   {{/if}}
