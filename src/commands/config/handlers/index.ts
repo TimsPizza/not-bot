@@ -10,6 +10,7 @@ import type { ConfigSubcommandHandler } from "../types";
 
 export const groupedHandlers = {
   persona: handlePersonaSubcommand,
+  summary: handleSummarySubcommand,
 } as const;
 
 export const subcommandHandlers: Record<string, ConfigSubcommandHandler> = {
@@ -17,7 +18,6 @@ export const subcommandHandlers: Record<string, ConfigSubcommandHandler> = {
   responsiveness: handleResponsivenessSubcommand,
   language: handleLanguageSubcommand,
   view: handleViewSubcommand,
-  summary: handleSummarySubcommand,
   context: handleContextLengthSubcommand,
   completion_delay: handleCompletionDelaySubcommand,
 };

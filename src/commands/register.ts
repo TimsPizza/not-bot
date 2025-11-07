@@ -22,8 +22,8 @@ const rest = new REST({ version: "10" }).setToken(
 const availablePresetPersonas = configService.getAvailablePresetPersonas();
 const personaChoices: APIApplicationCommandOptionChoice<string>[] = [];
 
-for (const persona of Array.from(availablePresetPersonas.values()).sort((a, b) =>
-  a.name.localeCompare(b.name),
+for (const persona of Array.from(availablePresetPersonas.values()).sort(
+  (a, b) => a.name.localeCompare(b.name),
 )) {
   if (personaChoices.length >= 25) {
     loggerService.logger.warn(
@@ -54,7 +54,7 @@ if (personaChoices.length === 0) {
     const clientId = process.env.DISCORD_CLIENT_ID;
     // Optional: For testing in a specific guild
     // UNUSED, FOR NOW
-    const guildId = process.env.DISCORD_TEST_GUILD_ID; 
+    const guildId = process.env.DISCORD_TEST_GUILD_ID;
 
     if (!clientId) {
       loggerService.logger.error(
@@ -128,7 +128,9 @@ if (personaChoices.length === 0) {
             .addSubcommand((subcommand) =>
               subcommand
                 .setName("list")
-                .setDescription("List available personas and show the active one"),
+                .setDescription(
+                  "List available personas and show the active one",
+                ),
             ),
         )
         .addSubcommand((subcommand) =>
@@ -173,15 +175,68 @@ if (personaChoices.length === 0) {
                 .setRequired(false),
             ),
         )
-        .addSubcommand((subcommand) =>
-          subcommand
+        .addSubcommandGroup((group) =>
+          group
             .setName("summary")
-            .setDescription("Enable or disable the summary feature")
-            .addBooleanOption((option) =>
-              option
-                .setName("enabled")
-                .setDescription("Whether to enable summaries")
-                .setRequired(true),
+            .setDescription("Configure the summary feature")
+            .addSubcommand((subcommand) =>
+              subcommand
+                .setName("feature")
+                .setDescription("Enable or disable the summary feature")
+                .addBooleanOption((option) =>
+                  option
+                    .setName("enabled")
+                    .setDescription("Whether to enable summaries")
+                    .setRequired(true),
+                ),
+            )
+            .addSubcommand((subcommand) =>
+              subcommand
+                .setName("channel")
+                .setDescription(
+                  "Allow or block summaries in a specific text channel",
+                )
+                .addBooleanOption((option) =>
+                  option
+                    .setName("allowed")
+                    .setDescription(
+                      "Whether summaries are allowed in the channel",
+                    )
+                    .setRequired(true),
+                )
+                .addChannelOption((option) =>
+                  option
+                    .setName("channel")
+                    .setDescription(
+                      "Target channel (defaults to the current channel)",
+                    )
+                    .addChannelTypes(ChannelType.GuildText),
+                ),
+            )
+            .addSubcommand((subcommand) =>
+              subcommand
+                .setName("roles")
+                .setDescription(
+                  "Manage which roles are allowed to request summaries",
+                )
+                .addStringOption((option) =>
+                  option
+                    .setName("action")
+                    .setDescription("Action to perform")
+                    .setRequired(true)
+                    .addChoices(
+                      { name: "Add", value: "add" },
+                      { name: "Remove", value: "remove" },
+                      { name: "Clear All", value: "clear" },
+                      { name: "List", value: "list" },
+                    ),
+                )
+                .addRoleOption((option) =>
+                  option
+                    .setName("role")
+                    .setDescription("Role to add or remove from the allow list")
+                    .setRequired(false),
+                ),
             ),
         )
         .addSubcommand((subcommand) =>
@@ -213,7 +268,8 @@ if (personaChoices.length === 0) {
                 .setMinValue(3)
                 .setMaxValue(120),
             ),
-        ),
+        )
+        ,
     ];
 
     // 添加上下文菜单命令

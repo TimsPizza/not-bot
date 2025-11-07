@@ -66,8 +66,20 @@ const RESPONSE_EMOTION_METRICS: EmotionMetric[] = [
 const EMOTION_BUCKET_LABELS: Record<EmotionMetric, string[]> = {
   affinity: ["Extremely distant", "Cool", "Neutral", "Warm", "Clingy"],
   annoyance: ["Calm", "Slightly annoyed", "Annoyed", "Irritated", "Critical"],
-  trust: ["No trust", "Doubtful", "Cautious trust", "Trusting", "Fully trusting"],
-  curiosity: ["No interest", "Mild interest", "Curious", "Very interested", "Highly engaged"],
+  trust: [
+    "No trust",
+    "Doubtful",
+    "Cautious trust",
+    "Trusting",
+    "Fully trusting",
+  ],
+  curiosity: [
+    "No interest",
+    "Mild interest",
+    "Curious",
+    "Very interested",
+    "Highly engaged",
+  ],
 };
 
 const DEFAULT_THRESHOLD_FALLBACK: Record<EmotionMetric, number[]> = {
@@ -89,7 +101,9 @@ export class PromptBuilder {
       case "summary":
         return buildSummaryPrompt(context);
       default:
-        throw new Error(`Unsupported prompt use case: ${(context as any).useCase}`);
+        throw new Error(
+          `Unsupported prompt use case: ${(context as any).useCase}`,
+        );
     }
   }
 }
@@ -167,9 +181,7 @@ function determineResponseLanguageInstruction(
   const languageTemplates = personaPrompts?.language_instructions;
 
   if (languageConfig.primary === "auto" && languageConfig.autoDetect) {
-    return (
-      languageTemplates?.auto_detect ?? DEFAULT_LANGUAGE_AUTO_INSTRUCTION
-    );
+    return languageTemplates?.auto_detect ?? DEFAULT_LANGUAGE_AUTO_INSTRUCTION;
   }
 
   if (languageConfig.primary !== "auto") {
@@ -180,7 +192,8 @@ function determineResponseLanguageInstruction(
       languageConfig.fallback;
 
     const template =
-      languageTemplates?.specific_language ?? DEFAULT_SPECIFIC_LANGUAGE_TEMPLATE;
+      languageTemplates?.specific_language ??
+      DEFAULT_SPECIFIC_LANGUAGE_TEMPLATE;
 
     return renderTemplate(template, {
       LANGUAGE_NAME: languageName,
@@ -250,9 +263,7 @@ function buildPendingProactiveMessageBlock(
   return lines.join("\n");
 }
 
-function buildEvaluationEmotionMessage(
-  snapshots: EmotionSnapshot[],
-): string {
+function buildEvaluationEmotionMessage(snapshots: EmotionSnapshot[]): string {
   const lines: string[] = [];
   lines.push(
     "Additional emotion context: prioritise users with higher affinity/trust and lower annoyance.",
@@ -278,7 +289,7 @@ function buildResponseOutputInstruction(
   return [
     "You must return a strict JSON object with the following structure:",
     "```json",
-    '{',
+    "{",
     '  "messages": [',
     '    {"sequence": 1, "delay_ms": 1200, "content": "..."}',
     "  ],",
@@ -323,14 +334,18 @@ function describeEmotionValue(
   thresholds: number[],
   metric: EmotionMetric,
 ): string {
-  const labels = EMOTION_BUCKET_LABELS[metric] || EMOTION_BUCKET_LABELS.affinity;
+  const labels =
+    EMOTION_BUCKET_LABELS[metric] || EMOTION_BUCKET_LABELS.affinity;
   const bucket = resolveBucketFromThresholds(value, thresholds);
   const index = Math.min(bucket, labels.length - 1);
   const candidate = labels[index];
   return candidate ?? labels[labels.length - 1] ?? "Neutral";
 }
 
-function resolveBucketFromThresholds(value: number, thresholds: number[]): number {
+function resolveBucketFromThresholds(
+  value: number,
+  thresholds: number[],
+): number {
   const sorted = [...thresholds].sort((a, b) => a - b);
   let bucket = sorted.length;
   for (let i = 0; i < sorted.length; i += 1) {
@@ -393,7 +408,7 @@ function buildEvaluationPrompt(context: EvaluationPromptContext): BuiltPrompt {
 
   return {
     messages,
-    temperature: 0.2,
+    temperature: 0.5,
     maxTokens: 1024,
   };
 }

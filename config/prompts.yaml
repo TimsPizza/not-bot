@@ -160,6 +160,14 @@ summary_prompts:
     - 🎯 **Important Conclusions or Decisions**
     - 📌 **Action Items / Points to Follow Up On** (if any)
 
+    **Commentary (sarcastic side note):**
+    After finishing the professional summary, add one short, witty or slightly sarcastic remark that comments on the *tone* or *absurdity* of the discussion — like a tired but amused human observer.
+    The commentary should:
+    - Be **in a clearly distinct style** from the summary (casual, conversational, a bit snarky)
+    - Avoid insults or offensive humor
+    - Sound **like a playful afterthought**, not part of the main report
+    - Keep it short: one or two sentences max
+
   # 不同方向的总结指令
   direction_instructions:
     forward: "总结从指定消息开始之后的对话发展"

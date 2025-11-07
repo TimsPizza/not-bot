@@ -1105,8 +1105,16 @@ class BotClient {
           "./commands/context/summarize.js"
         );
         await handleSummaryButtonClick(interaction);
+        return;
       }
-      return;
+
+      if (interaction.customId.startsWith("summaryview:")) {
+        const { handleSummaryViewButton } = await import(
+          "./commands/context/summarize.js"
+        );
+        await handleSummaryViewButton(interaction);
+        return;
+      }
     }
 
     // 只处理斜杠命令
