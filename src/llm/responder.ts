@@ -15,7 +15,10 @@ import {
 } from "@/types";
 import { callChatCompletionApi } from "./openai_client";
 import { PromptBuilder } from "@/prompt";
+import type { BuiltPrompt } from "@/prompt";
 import { parseStructuredJson } from "./structuredJson";
+import { retryWithExponentialBackoff } from "@/utils/retry";
+import { LLMRetryError } from "@/errors/LLMRetryError";
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "affinity",
@@ -23,6 +26,10 @@ const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "trust",
   "curiosity",
 ];
+
+const RESPONDER_MAX_ATTEMPTS = 3;
+const RESPONDER_BASE_DELAY_MS = 1_000;
+const RESPONDER_MAX_DELAY_MS = 4_000;
 
 class ResponderService {
   private static instance: ResponderService;
@@ -123,25 +130,11 @@ class ResponderService {
         pendingProactiveMessages: emotionContext?.pendingProactiveMessages,
       });
 
-      // Call the API using the main client (for response generation)
-      // Use non-null assertion (!) as config is validated at the start of the method
-      const rawResponse = await callChatCompletionApi(
-        "main",
-        this.config!.primaryLlmModel,
-        prompt.messages,
-        prompt.temperature,
-        prompt.maxTokens,
+      const cleanedText = await this.callResponderModelWithRetry(
+        prompt,
+        channelId,
       );
 
-      if (!rawResponse) {
-        return null;
-      }
-
-      const cleanedText = rawResponse.trim();
-      if (cleanedText.length === 0) {
-        loggerService.logger.warn("LLM generated an empty response.");
-        return null;
-      }
       if (cleanedText.toLowerCase().includes("as an ai language model")) {
         loggerService.logger.warn(
           "LLM response contained boilerplate AI disclaimer. Discarding.",
@@ -167,8 +160,67 @@ class ResponderService {
 
       return responderOutput;
     } catch (error) {
+      if (error instanceof LLMRetryError) {
+        throw error;
+      }
       loggerService.logger.error({ err: error }, "Error generating response");
       return null;
+    }
+  }
+
+  private async callResponderModelWithRetry(
+    prompt: BuiltPrompt,
+    channelId: string,
+  ): Promise<string> {
+    try {
+      return await retryWithExponentialBackoff(
+        async () => {
+          const rawResponse = await callChatCompletionApi(
+            "main",
+            this.config!.primaryLlmModel,
+            prompt.messages,
+            prompt.temperature,
+            prompt.maxTokens,
+          );
+
+          if (!rawResponse) {
+            throw new Error("Responder LLM returned null response.");
+          }
+
+          const trimmed = rawResponse.trim();
+          if (!trimmed) {
+            throw new Error("Responder LLM returned empty response.");
+          }
+          return trimmed;
+        },
+        {
+          maxAttempts: RESPONDER_MAX_ATTEMPTS,
+          baseDelayMs: RESPONDER_BASE_DELAY_MS,
+          maxDelayMs: RESPONDER_MAX_DELAY_MS,
+          onRetry: (attempt, error, delayMs) => {
+            loggerService.logger.warn(
+              {
+                channelId,
+                attempt,
+                delayMs,
+                err:
+                  error instanceof Error
+                    ? error.message
+                    : typeof error === "string"
+                      ? error
+                      : "unknown",
+              },
+              "Responder LLM call failed; retrying with backoff.",
+            );
+          },
+        },
+      );
+    } catch (error) {
+      loggerService.logger.error(
+        { channelId, err: error },
+        "Responder LLM retries exhausted.",
+      );
+      throw new LLMRetryError("responder", RESPONDER_MAX_ATTEMPTS, error);
     }
   }
 
@@ -192,8 +244,10 @@ class ResponderService {
     } else if (parsed && typeof parsed === "object") {
       segmentsSource = (parsed as { messages?: unknown }).messages;
       deltaSource = (parsed as { emotion_delta?: unknown }).emotion_delta;
-      proactiveSource = (parsed as { proactive_messages?: unknown }).proactive_messages;
-      cancelSource = (parsed as { cancel_schedule_ids?: unknown }).cancel_schedule_ids;
+      proactiveSource = (parsed as { proactive_messages?: unknown })
+        .proactive_messages;
+      cancelSource = (parsed as { cancel_schedule_ids?: unknown })
+        .cancel_schedule_ids;
     }
 
     if (!Array.isArray(segmentsSource)) {
@@ -233,7 +287,8 @@ class ResponderService {
         return;
       }
 
-      const sequenceRaw = (entry as { sequence?: unknown }).sequence ?? index + 1;
+      const sequenceRaw =
+        (entry as { sequence?: unknown }).sequence ?? index + 1;
       const delayRaw = (entry as { delay_ms?: unknown }).delay_ms ?? 0;
       const contentRaw = (entry as { content?: unknown }).content;
 

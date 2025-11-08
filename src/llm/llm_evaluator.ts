@@ -2,6 +2,7 @@
 import configService from "@/config";
 import loggerService from "@/logger";
 import { PromptBuilder } from "@/prompt";
+import type { BuiltPrompt } from "@/prompt";
 import {
   AppConfig,
   EmotionDeltaInstruction,
@@ -14,6 +15,8 @@ import {
 } from "@/types";
 import { callChatCompletionApi } from "./openai_client";
 import { parseStructuredJson } from "./structuredJson";
+import { retryWithExponentialBackoff } from "@/utils/retry";
+import { LLMRetryError } from "@/errors/LLMRetryError";
 
 class LLMEvaluatorService {
   private static instance: LLMEvaluatorService;
@@ -114,18 +117,7 @@ class LLMEvaluatorService {
         `Sending ${prompt.messages.length} message parts (system + user with combined context/batch) to LLM Evaluator using effective threshold ${effectiveThreshold.toFixed(2)}.`,
       );
 
-      // Call the API using the eval client (for message evaluation)
-      const rawContent = await callChatCompletionApi(
-        "eval",
-        this.config.secondaryLlmModel,
-        prompt.messages,
-        prompt.temperature,
-        prompt.maxTokens,
-      );
-
-      if (!rawContent) {
-        throw new Error("LLM API call returned null content.");
-      }
+      const rawContent = await this.callEvaluatorModelWithRetry(prompt);
 
       // --- Parse and Validate JSON Response ---
       const jsonMatch = rawContent.match(/```json\s*([\s\S]+?)\s*```/);
@@ -134,7 +126,11 @@ class LLMEvaluatorService {
         "evaluator",
       );
 
-      if (!parsedJson || typeof parsedJson !== "object" || Array.isArray(parsedJson)) {
+      if (
+        !parsedJson ||
+        typeof parsedJson !== "object" ||
+        Array.isArray(parsedJson)
+      ) {
         throw new Error(
           `Parsed evaluator payload is not an object. Raw: ${rawContent}`,
         );
@@ -206,14 +202,70 @@ class LLMEvaluatorService {
       );
       return result; // Return the validated and structured result
     } catch (error) {
+      if (error instanceof LLMRetryError) {
+        throw error;
+      }
       loggerService.logger.error(
         `Error during LLM evaluation process: ${error}`,
       );
       return null;
     }
   }
-}
 
+  private async callEvaluatorModelWithRetry(
+    prompt: BuiltPrompt,
+  ): Promise<string> {
+    try {
+      return await retryWithExponentialBackoff(
+        async () => {
+          const rawContent = await callChatCompletionApi(
+            "eval",
+            this.config!.secondaryLlmModel,
+            prompt.messages,
+            prompt.temperature,
+            prompt.maxTokens,
+          );
+
+          if (!rawContent) {
+            throw new Error("LLM evaluator returned null response.");
+          }
+
+          const trimmed = rawContent.trim();
+          if (!trimmed) {
+            throw new Error("LLM evaluator returned empty response.");
+          }
+          return trimmed;
+        },
+        {
+          maxAttempts: EVALUATOR_MAX_ATTEMPTS,
+          baseDelayMs: EVALUATOR_BASE_DELAY_MS,
+          maxDelayMs: EVALUATOR_MAX_DELAY_MS,
+          onRetry: (attempt, error, delayMs) => {
+            loggerService.logger.warn(
+              {
+                attempt,
+                delayMs,
+                err:
+                  error instanceof Error
+                    ? error.message
+                    : typeof error === "string"
+                      ? error
+                      : "unknown",
+              },
+              "Evaluator LLM call failed; retrying with backoff.",
+            );
+          },
+        },
+      );
+    } catch (error) {
+      loggerService.logger.error(
+        { err: error },
+        "Evaluator LLM retries exhausted.",
+      );
+      throw new LLMRetryError("evaluator", EVALUATOR_MAX_ATTEMPTS, error);
+    }
+  }
+}
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "affinity",
@@ -222,9 +274,11 @@ const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "curiosity",
 ];
 
-function parseEmotionDeltaArray(
-  input: unknown,
-): EmotionDeltaInstruction[] {
+const EVALUATOR_MAX_ATTEMPTS = 3;
+const EVALUATOR_BASE_DELAY_MS = 1_000;
+const EVALUATOR_MAX_DELAY_MS = 10_000;
+
+function parseEmotionDeltaArray(input: unknown): EmotionDeltaInstruction[] {
   if (!Array.isArray(input)) {
     return [];
   }
@@ -267,9 +321,7 @@ function parseEmotionDeltaArray(
   return deltas;
 }
 
-function parseProactiveMessagesArray(
-  input: unknown,
-): ProactiveMessageDraft[] {
+function parseProactiveMessagesArray(input: unknown): ProactiveMessageDraft[] {
   if (!Array.isArray(input)) {
     return [];
   }

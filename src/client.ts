@@ -32,6 +32,7 @@ import {
   SimpleMessage,
   StructuredResponseSegment,
 } from "@/types";
+import { LLMRetryError, LLMServiceName } from "@/errors/LLMRetryError";
 import {
   CacheType, // Added
   ChannelType,
@@ -285,10 +286,18 @@ class BotClient {
             pendingProactiveSummaries,
           );
         } catch (error) {
-          loggerService.logger.error(
-            { channelId, err: error },
-            "Evaluator threw an error. Skipping batch.",
-          );
+          if (error instanceof LLMRetryError) {
+            loggerService.logger.error(
+              { channelId, err: error },
+              "Evaluator failed after retries.",
+            );
+            await this.notifyChannelOfLLMFailure(channelId, error.service);
+          } else {
+            loggerService.logger.error(
+              { channelId, err: error },
+              "Evaluator threw an error. Skipping batch.",
+            );
+          }
           return;
         }
 
@@ -340,8 +349,9 @@ class BotClient {
         messages[messages.length - 1] ?? null;
       if (evaluationResult?.target_message_id) {
         const targeted =
-          messages.find((msg) => msg.id === evaluationResult.target_message_id) ||
-          null;
+          messages.find(
+            (msg) => msg.id === evaluationResult.target_message_id,
+          ) || null;
         if (!targeted) {
           loggerService.logger.warn(
             {
@@ -390,10 +400,18 @@ class BotClient {
           },
         );
       } catch (error) {
-        loggerService.logger.error(
-          { channelId, err: error },
-          "Responder threw an error. Skipping batch.",
-        );
+        if (error instanceof LLMRetryError) {
+          loggerService.logger.error(
+            { channelId, err: error },
+            "Responder failed after retries.",
+          );
+          await this.notifyChannelOfLLMFailure(channelId, error.service);
+        } else {
+          loggerService.logger.error(
+            { channelId, err: error },
+            "Responder threw an error. Skipping batch.",
+          );
+        }
         return;
       }
 
@@ -598,10 +616,7 @@ class BotClient {
     channelId: string,
     delaySeconds?: number,
   ): Promise<void> {
-    const totalDelayMs = Math.max(
-      0,
-      Math.round((delaySeconds ?? 0) * 1000),
-    );
+    const totalDelayMs = Math.max(0, Math.round((delaySeconds ?? 0) * 1000));
 
     let sendableChannel: TextChannel | DMChannel | null = null;
     try {
@@ -870,6 +885,30 @@ class BotClient {
     await this.enqueueResponseSegments(record.channelId, segments);
   }
 
+  private async notifyChannelOfLLMFailure(
+    channelId: string,
+    service: LLMServiceName,
+  ): Promise<void> {
+    const serviceLabel =
+      service === "responder" ? "response generator" : "message evaluator";
+    const segments: StructuredResponseSegment[] = [
+      {
+        sequence: 1,
+        delayMs: 0,
+        content: `[!] Unable to contact the ${serviceLabel} after repeated errors. Please try again later.`,
+      },
+    ];
+
+    try {
+      await this.enqueueResponseSegments(channelId, segments);
+    } catch (error) {
+      loggerService.logger.error(
+        { channelId, err: error },
+        "Failed to notify channel about LLM failure.",
+      );
+    }
+  }
+
   /**
    * @description Sends a response message to a specific Discord channel and adds it to context.
    * @param channelId The ID of the target channel.
@@ -1105,14 +1144,6 @@ class BotClient {
           "./commands/context/summarize.js"
         );
         await handleSummaryButtonClick(interaction);
-        return;
-      }
-
-      if (interaction.customId.startsWith("summaryview:")) {
-        const { handleSummaryViewButton } = await import(
-          "./commands/context/summarize.js"
-        );
-        await handleSummaryViewButton(interaction);
         return;
       }
     }
