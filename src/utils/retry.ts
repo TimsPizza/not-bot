@@ -5,9 +5,9 @@ export interface RetryOptions {
   onRetry?: (attempt: number, error: unknown, delayMs: number) => void;
 }
 
-const DEFAULT_MAX_ATTEMPTS = 3;
-const DEFAULT_BASE_DELAY_MS = 1_000;
-const DEFAULT_MAX_DELAY_MS = 8_000;
+const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_BASE_DELAY_MS = 5_000;
+const DEFAULT_MAX_DELAY_MS = 60_000;
 
 export async function retryWithExponentialBackoff<T>(
   operation: (attempt: number) => Promise<T>,
@@ -36,7 +36,8 @@ export async function retryWithExponentialBackoff<T>(
 
       const delayMs = Math.min(
         maxDelayMs,
-        baseDelayMs * Math.pow(2, attempt - 1),
+        // add a little randomess to avoid thundering herd
+        baseDelayMs * Math.pow(2 + Math.random(), attempt - 1),
       );
       options?.onRetry?.(attempt, error, delayMs);
       await new Promise((resolve) => setTimeout(resolve, delayMs));

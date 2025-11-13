@@ -126,7 +126,7 @@ class BotClient {
    */
   private async handleMessageCreate(message: Message): Promise<void> {
     // 1. Initial Filtering
-    if (message.author.bot) return; // Ignore bots (including self)
+    if (message.author.id === this.client.user?.id) return; // Ignore self
     loggerService.logger.info(
       `Received message from ${message.author.username} in channel ${message.channelId} in guild ${message.guildId}: ${message.content}`,
     );
@@ -895,7 +895,7 @@ class BotClient {
       {
         sequence: 1,
         delayMs: 0,
-        content: `[!] Unable to contact the ${serviceLabel} after repeated errors. Please try again later.`,
+        content: `[!] Unable to contact the ${serviceLabel} after repeated errors. Please try again latern.`,
       },
     ];
 
