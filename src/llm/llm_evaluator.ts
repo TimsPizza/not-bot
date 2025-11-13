@@ -274,9 +274,9 @@ const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "curiosity",
 ];
 
-const EVALUATOR_MAX_ATTEMPTS = 3;
-const EVALUATOR_BASE_DELAY_MS = 1_000;
-const EVALUATOR_MAX_DELAY_MS = 10_000;
+const EVALUATOR_MAX_ATTEMPTS = 5;
+const EVALUATOR_BASE_DELAY_MS = 10_000;
+const EVALUATOR_MAX_DELAY_MS = 60_000;
 
 function parseEmotionDeltaArray(input: unknown): EmotionDeltaInstruction[] {
   if (!Array.isArray(input)) {

@@ -27,9 +27,9 @@ const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "curiosity",
 ];
 
-const RESPONDER_MAX_ATTEMPTS = 3;
-const RESPONDER_BASE_DELAY_MS = 1_000;
-const RESPONDER_MAX_DELAY_MS = 4_000;
+const RESPONDER_MAX_ATTEMPTS = 5;
+const RESPONDER_BASE_DELAY_MS = 10_000;
+const RESPONDER_MAX_DELAY_MS = 60_000;
 
 class ResponderService {
   private static instance: ResponderService;
