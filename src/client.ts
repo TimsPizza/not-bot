@@ -136,7 +136,11 @@ class BotClient {
       );
       return;
     }
-    if (message.content.startsWith("[!] Unable to contact")) return;
+    if (
+      message.content.startsWith("[!] Unable to contact") ||
+      message.content.startsWith("[!] Bot is thinking")
+    )
+      return;
     // Ignore LLM failure notices
 
     if (!this.botId) {
@@ -385,6 +389,15 @@ class BotClient {
         5,
       );
 
+      let thinkingTimeout: NodeJS.Timeout | null = setTimeout(() => {
+        this.sendSlowResponseNotice(channelId).catch((err) => {
+          loggerService.logger.debug(
+            { channelId, err },
+            "Failed to send slow-response notice.",
+          );
+        });
+      }, 20_000);
+
       let responseResult;
       try {
         if (!this.botId) {
@@ -424,6 +437,11 @@ class BotClient {
           );
         }
         return;
+      } finally {
+        if (thinkingTimeout) {
+          clearTimeout(thinkingTimeout);
+          thinkingTimeout = null;
+        }
       }
 
       if (!responseResult) {
@@ -627,7 +645,10 @@ class BotClient {
     channelId: string,
     delaySeconds?: number,
   ): Promise<void> {
-    const totalDelayMs = Math.max(0, Math.round((delaySeconds ?? 0) * 1000));
+    // const totalDelayMs = Math.max(0, Math.round((delaySeconds ?? 0) * 1000));
+    // override, as chat completion will be waiting for 20s before sending 'thinking for longer' msg
+    // to keep users updated
+    const totalDelayMs = 15000;
 
     let sendableChannel: TextChannel | DMChannel | null = null;
     try {
@@ -658,7 +679,7 @@ class BotClient {
     }
 
     const start = Date.now();
-    const burstIntervalMs = 9000;
+    const burstIntervalMs = 3000;
 
     while (true) {
       try {
@@ -671,9 +692,9 @@ class BotClient {
         break;
       }
 
-      if (totalDelayMs === 0) {
-        break;
-      }
+      // if (totalDelayMs === 0) {
+      //   break;
+      // }
 
       const elapsed = Date.now() - start;
       const remaining = totalDelayMs - elapsed;
@@ -1023,6 +1044,27 @@ class BotClient {
       loggerService.logger.error(
         { err: error, channelId },
         "Failed to send response segment",
+      );
+    }
+  }
+
+  private async sendSlowResponseNotice(channelId: string): Promise<void> {
+    try {
+      const fetchedChannel = await this.client.channels.fetch(channelId);
+      const sendableChannel =
+        fetchedChannel instanceof TextChannel
+          ? fetchedChannel
+          : fetchedChannel instanceof DMChannel
+            ? fetchedChannel
+            : null;
+      if (!sendableChannel) {
+        return;
+      }
+      await sendableChannel.send("[!]Bot is thinking for longer");
+    } catch (error) {
+      loggerService.logger.warn(
+        { channelId, err: error },
+        "Failed to send slow-response notice.",
       );
     }
   }

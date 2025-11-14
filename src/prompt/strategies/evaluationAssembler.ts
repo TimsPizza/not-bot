@@ -88,15 +88,15 @@ export class EvaluationPromptAssembler extends BasePromptAssembler<EvaluationPro
     return {
       role: "system",
       content:
-        "Return a strict JSON object with keys `response_score` (float 0.0-1.0), `reason` (string), `should_respond` (boolean), optional `emotion_delta` array, optional `proactive_messages` array, and optional `cancel_schedule_ids` array. `emotion_delta` entries require `user_id`, `metric` (affinity|annoyance|trust|curiosity), `delta` (integer within [-12,12]), plus optional `reason`. `proactive_messages` entries allow `id` (existing schedule or omit for new), `send_at` (ISO 8601 UTC), `content`, and optional `reason`. Include `cancel_schedule_ids` only when scheduled items must be cancelled. Do not add text outside the JSON.",
+        "Return a strict JSON object with keys `response_score` (float 0.0-1.0), `reason` (string), `should_respond` (boolean), optional `emotion_delta` array, optional `proactive_messages` array, and optional `cancel_schedule_ids` array. `emotion_delta` entries require `user_id`, `metric` (affinity|annoyance|trust|curiosity), `delta` (integer within [-12,12]), plus optional `reason`. `proactive_messages` entries allow `id` (existing schedule or omit for new), `send_at` (ISO 8601 UTC), `content`, and optional `reason`. Include `cancel_schedule_ids` only when scheduled items must be cancelled. Do not add text outside the JSON. Do not wrap the JSON in an array. Always keep the ```json ... ``` fencing.",
     };
   }
 
   protected getTemperature(): number {
-    return 0.5;
+    return 0.8;
   }
 
   protected getMaxTokens(): number {
-    return 1024;
+    return 4096;
   }
 }

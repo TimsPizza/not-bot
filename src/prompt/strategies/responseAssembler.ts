@@ -99,11 +99,11 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
   }
 
   protected getTemperature(): number {
-    return 1;
+    return 1.1;
   }
 
   protected getMaxTokens(): number {
-    return 1024;
+    return 8192;
   }
 }
 
@@ -114,10 +114,16 @@ function buildResponseOutputInstruction(
     const cap = deltaCaps?.[metric] ?? OUTPUT_DELTA_BOUND;
     return `${metric}: ±${cap}`;
   }).join(", ");
+
   const exampleSendAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   return [
-    "Return a strict JSON object with the following structure:",
+    "You MUST output exactly one JSON object, wrapped in a single fenced code block using ```json ... ```.",
+    "The top-level value MUST be a JSON object, NOT an array.",
+    "Do NOT include any text before or after the code block.",
+    "Do NOT include multiple code blocks.",
+    "",
+    "The JSON structure MUST follow this exact schema:",
     "```json",
     "{",
     '  "messages": [',
@@ -132,12 +138,15 @@ function buildResponseOutputInstruction(
     '  "cancel_schedule_ids": ["abc123"]',
     "}",
     "```",
+    "",
+    "Rules:",
+    "- The top-level must be an object. NEVER wrap it in an array.",
     "- `messages` MUST be a non-empty array with sequential `sequence` (starting at 1), non-negative `delay_ms`, and textual `content`.",
-    "- `emotion_delta` is optional. Each entry requires `user_id`, `metric` (affinity|annoyance|trust|curiosity), `delta` (integer). Keep deltas within [-12, 12] unless persona caps are stricter (caps: " +
+    "- `emotion_delta` is optional. Each entry requires `user_id`, `metric` (affinity|annoyance|trust|curiosity), and `delta` within [-12, 12], unless caps are stricter (" +
       caps +
       ").",
-    "- `proactive_messages` is optional. Each entry must include `send_at` (ISO 8601 UTC) and `content`. Provide an `id` when modifying an existing schedule.",
+    "- `proactive_messages` is optional. Each entry must include `send_at` (ISO 8601 UTC) and `content`; include `id` if modifying an existing schedule.",
     "- `cancel_schedule_ids` is optional. Only include IDs that should be cancelled.",
-    "- No extra commentary outside the JSON body.",
+    "- Output nothing outside the fenced code block.",
   ].join("\n");
 }

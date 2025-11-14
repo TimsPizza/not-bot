@@ -1,7 +1,7 @@
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { renderTemplate } from "../template";
 import { SummaryPromptContext } from "../types";
 import { BasePromptAssembler } from "./base";
-import { renderTemplate } from "../template";
 
 const SUMMARY_SYSTEM_MESSAGE =
   "You are a precise chat log summarizer. Produce concise, helpful summaries that follow the requested language and format.";
