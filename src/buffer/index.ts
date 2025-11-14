@@ -2,7 +2,6 @@
 import configService from "@/config";
 import loggerService from "@/logger";
 import { SimpleMessage } from "@/types";
-import { randomInt } from "node:crypto";
 // Import ScorerService later when it's created
 // import scorerService from '@/scorer';
 
@@ -128,7 +127,7 @@ class BufferQueueService {
   }
 
   private calculateWindowMs(channelId: string, bufferLength: number): number {
-    const randomess = Math.max(Math.min(Math.random() + 1, 1.2), 1.43);
+    const randomess = Math.min(Math.max(Math.random() + 1, 1.2), 1.43);
     if (bufferLength <= 1) {
       this.dynamicWindows.delete(channelId);
       return this.bufferTimeWindowMs * randomess;

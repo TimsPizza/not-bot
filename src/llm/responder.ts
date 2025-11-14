@@ -1,24 +1,24 @@
 // src/llm/responder.ts
 import configService from "@/config";
 import contextManagerService from "@/context";
+import { LLMRetryError } from "@/errors/LLMRetryError";
 import loggerService from "@/logger";
+import type { BuiltPrompt } from "@/prompt";
+import { PromptBuilder } from "@/prompt";
 import {
   AppConfig,
-  SimpleMessage,
-  StructuredResponseSegment,
-  ResponderResult,
   EmotionDeltaInstruction,
   EmotionMetric,
   EmotionSnapshot,
   ProactiveMessageDraft,
   ProactiveMessageSummary,
+  ResponderResult,
+  SimpleMessage,
+  StructuredResponseSegment,
 } from "@/types";
-import { callChatCompletionApi } from "./openai_client";
-import { PromptBuilder } from "@/prompt";
-import type { BuiltPrompt } from "@/prompt";
-import { parseStructuredJson } from "./structuredJson";
 import { retryWithExponentialBackoff } from "@/utils/retry";
-import { LLMRetryError } from "@/errors/LLMRetryError";
+import { callChatCompletionApi } from "./openai_client";
+import { parseStructuredJson } from "./structuredJson";
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "affinity",
@@ -68,6 +68,7 @@ class ResponderService {
     channelId: string,
     systemPromptTemplate: string,
     personaDetails: string,
+    botUserId: string,
     languageConfig?: { primary: string; fallback: string; autoDetect: boolean },
     targetMessage?: SimpleMessage,
     emotionContext?: {
@@ -106,7 +107,6 @@ class ResponderService {
     // Get context for the channel
     const context = contextManagerService.getContext(channelId);
     const contextMessages = context?.messages || [];
-
     if (contextMessages.length === 0) {
       loggerService.logger.warn(
         `No context found for channel ${channelId}. Cannot generate response.`,
@@ -122,6 +122,7 @@ class ResponderService {
         personaDetails,
         personaPrompts,
         contextMessages,
+        botUserId,
         languageConfig,
         targetMessage,
         targetUserId: emotionContext?.targetUserId,

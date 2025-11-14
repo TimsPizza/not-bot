@@ -56,6 +56,7 @@ class LLMEvaluatorService {
     responsiveness: number,
     evaluationPromptTemplate: string, // Added template
     personaDetails: string, // Added persona details
+    botUserId: string,
     batchMessages: SimpleMessage[],
     channelContextMessages: SimpleMessage[],
     emotionSnapshots?: EmotionSnapshot[],
@@ -96,6 +97,7 @@ class LLMEvaluatorService {
         useCase: "evaluation",
         evaluationPromptTemplate,
         personaDetails,
+        botUserId,
         channelContextMessages,
         batchMessages,
         emotionSnapshots,
@@ -143,9 +145,7 @@ class LLMEvaluatorService {
         typeof structured.response_score !== "number" ||
         structured.response_score < 0 ||
         structured.response_score > 1 || // Check range
-        typeof structured.reason !== "string" ||
-        (structured.target_message_id !== null &&
-          typeof structured.target_message_id !== "string")
+        typeof structured.reason !== "string"
       ) {
         throw new Error(
           `Parsed JSON from LLM evaluator has incorrect structure or invalid values. Parsed: ${JSON.stringify(structured)}`,
@@ -160,7 +160,6 @@ class LLMEvaluatorService {
 
       const result: LLMEvaluationResult = {
         response_score: structured.response_score,
-        target_message_id: structured.target_message_id,
         reason: structured.reason,
         should_respond: shouldRespondFlag,
       };
@@ -182,23 +181,8 @@ class LLMEvaluatorService {
         result.cancelScheduleIds = cancelScheduleIds;
       }
 
-      // Ensure target_message_id is null if score is below the effective threshold
-      if (
-        result.response_score < effectiveThreshold &&
-        result.target_message_id !== null
-      ) {
-        loggerService.logger.debug(
-          `LLM evaluator provided target_message_id (${result.target_message_id}) but response_score (${result.response_score.toFixed(2)}) is below effective threshold (${effectiveThreshold.toFixed(2)}). Clearing target.`,
-        );
-        result.target_message_id = null;
-      }
-      // Also ensure target_message_id is null if should_respond is false (redundant check, but safe)
-      if (!result.should_respond) {
-        result.target_message_id = null;
-      }
-
       loggerService.logger.info(
-        `LLM Evaluation result: response_score=${result.response_score.toFixed(2)}, target_id=${result.target_message_id || "N/A"}`,
+        `LLM Evaluation result: response_score=${result.response_score.toFixed(2)}, should_respond=${result.should_respond}`,
       );
       return result; // Return the validated and structured result
     } catch (error) {

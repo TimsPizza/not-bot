@@ -1,8 +1,8 @@
 // src/llm/openai_client.ts
-import OpenAI from "openai";
-import loggerService from "@/logger";
-import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import configService from "@/config";
+import loggerService from "@/logger";
+import OpenAI from "openai";
+import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 const config = configService.getConfig();
 

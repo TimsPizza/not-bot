@@ -10,6 +10,7 @@ import configService from "@/config"; // Import class type
 import contextManagerService from "@/context";
 import type { ChannelProactiveMessageRow } from "@/db/schema";
 import emotionService from "@/emotions";
+import { LLMRetryError, LLMServiceName } from "@/errors/LLMRetryError";
 import llmEvaluatorService from "@/llm/llm_evaluator";
 import responderService from "@/llm/responder";
 import loggerService from "@/logger";
@@ -25,14 +26,12 @@ import {
 import {
   EmotionDeltaInstruction,
   EmotionDeltaSuggestion,
-  EmotionSnapshot,
   PersonaDefinition,
   ProactiveMessageDraft,
   ServerConfig,
   SimpleMessage,
   StructuredResponseSegment,
 } from "@/types";
-import { LLMRetryError, LLMServiceName } from "@/errors/LLMRetryError";
 import {
   CacheType, // Added
   ChannelType,
@@ -137,6 +136,9 @@ class BotClient {
       );
       return;
     }
+    if (message.content.startsWith("[!] Unable to contact")) return;
+    // Ignore LLM failure notices
+
     if (!this.botId) {
       // Ensure botId is set (should be after ClientReady)
       loggerService.logger.warn("Bot ID not set yet, ignoring message.");
@@ -276,10 +278,19 @@ class BotClient {
         );
 
         try {
+          if (!this.botId) {
+            loggerService.logger.error(
+              { channelId },
+              "Bot ID unavailable while running evaluator.",
+            );
+            return;
+          }
+
           evaluationResult = await llmEvaluatorService.evaluateMessages(
             context.serverConfig?.responsiveness ?? 0.6,
             context.evaluationPromptTemplate,
             context.personaDefinition.details,
+            this.botId,
             messages,
             context.channelContextMessages,
             evaluationEmotionSnapshots,
@@ -291,7 +302,8 @@ class BotClient {
               { channelId, err: error },
               "Evaluator failed after retries.",
             );
-            await this.notifyChannelOfLLMFailure(channelId, error.service);
+            // do not notify evaluator failure msg
+            // await this.notifyChannelOfLLMFailure(channelId, error.service);
           } else {
             loggerService.logger.error(
               { channelId, err: error },
@@ -306,10 +318,11 @@ class BotClient {
             { channelId },
             "Evaluator returned null result. Skipping batch.",
           );
-          return;
+          // ignore eval failure
+          // return;
         }
 
-        if (evaluationResult.emotionDeltas?.length) {
+        if (evaluationResult && evaluationResult.emotionDeltas?.length) {
           this.applyEmotionDeltas(
             channelId,
             context.personaDefinition,
@@ -319,8 +332,9 @@ class BotClient {
         }
 
         if (
-          evaluationResult.proactiveMessages?.length ||
-          evaluationResult.cancelScheduleIds?.length
+          evaluationResult &&
+          (evaluationResult.proactiveMessages?.length ||
+            evaluationResult.cancelScheduleIds?.length)
         ) {
           this.processProactiveDirectives(
             channelId,
@@ -331,7 +345,7 @@ class BotClient {
           pendingProactiveSummaries = getPendingSummaries(channelId);
         }
 
-        if (!evaluationResult.should_respond) {
+        if (evaluationResult && !evaluationResult.should_respond) {
           loggerService.logger.info(
             { channelId, reason: evaluationResult.reason },
             "Evaluator advised not to respond to this batch.",
@@ -345,25 +359,12 @@ class BotClient {
         );
       }
 
-      let finalTargetMessage: SimpleMessage | null =
-        messages[messages.length - 1] ?? null;
-      if (evaluationResult?.target_message_id) {
-        const targeted =
-          messages.find(
-            (msg) => msg.id === evaluationResult.target_message_id,
-          ) || null;
-        if (!targeted) {
-          loggerService.logger.warn(
-            {
-              channelId,
-              messageId: evaluationResult.target_message_id,
-            },
-            "Evaluator target message not found in current batch. Falling back to latest message.",
-          );
-        } else {
-          finalTargetMessage = targeted;
-        }
-      }
+      const finalTargetMessage =
+        [...messages]
+          .reverse()
+          .find((msg) => !msg.isBot && msg.content.trim().length > 0) ??
+        messages[messages.length - 1] ??
+        null;
 
       await this.simulateTyping(
         channelId,
@@ -386,12 +387,22 @@ class BotClient {
 
       let responseResult;
       try {
+        if (!this.botId) {
+          loggerService.logger.error(
+            { channelId },
+            "Bot ID unavailable while generating response.",
+          );
+          return;
+        }
+
         responseResult = await responderService.generateResponse(
           channelId,
           context.systemPromptTemplate,
           context.personaDefinition.details,
+          this.botId,
           context.languageConfig,
-          finalTargetMessage ?? undefined,
+          undefined, // disable forced target msg
+          // finalTargetMessage ?? undefined,
           {
             targetUserId: finalTargetMessage?.authorId,
             snapshots: responseEmotionSnapshots,

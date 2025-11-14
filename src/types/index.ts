@@ -34,9 +34,8 @@ export interface SimpleMessage {
  * Includes a score indicating the confidence/appropriateness of responding.
  */
 export interface LLMEvaluationResult {
-  should_respond: boolean; // Kept for backward compatibility or simple cases, but response_score is preferred
+  should_respond: boolean; // Primary flag from evaluator; falls back to response_score threshold if missing
   response_score: number; // Score from 0.0 to 1.0 indicating how strongly the LLM suggests responding
-  target_message_id: string | null; // ID of the message selected for response, if any
   reason: string; // Explanation from the LLM
   emotionDeltas?: EmotionDeltaInstruction[]; // Optional emotion adjustments suggested by the model
   proactiveMessages?: ProactiveMessageDraft[];

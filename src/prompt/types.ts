@@ -15,6 +15,7 @@ export interface ResponsePromptContext {
   personaDetails: string;
   personaPrompts: PersonaPrompts | null;
   contextMessages: SimpleMessage[];
+  botUserId: string;
   languageConfig?: { primary: string; fallback: string; autoDetect: boolean };
   targetMessage?: SimpleMessage;
   targetUserId?: string;
@@ -27,6 +28,7 @@ export interface EvaluationPromptContext {
   useCase: "evaluation";
   evaluationPromptTemplate: string;
   personaDetails: string;
+  botUserId: string;
   channelContextMessages: SimpleMessage[];
   batchMessages: SimpleMessage[];
   contextLookback?: number;
