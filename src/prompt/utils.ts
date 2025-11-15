@@ -1,3 +1,4 @@
+import loggerService from "@/logger";
 import {
   EmotionMetric,
   EmotionSnapshot,
@@ -115,7 +116,11 @@ export function buildUsernameMappingBlock(
   lines.push(
     "When mentioning any participant, always use the <@user_id> form shown above.",
   );
-  return lines.join("\n");
+  const final = lines.join("\n");
+  loggerService.logger.debug(
+    `Creating user mapping text for summary: ${JSON.stringify(final)}`,
+  );
+  return final;
 }
 
 export function buildEmotionRelationshipHints(

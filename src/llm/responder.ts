@@ -295,10 +295,15 @@ class ResponderService {
 
       const sequence = Number(sequenceRaw);
       const delayMs = Number(delayRaw);
-      const content =
+      const contentRawString =
         typeof contentRaw === "string" ? contentRaw.trim() : undefined;
+      if (!Number.isFinite(sequence) || !contentRawString) {
+        return;
+      }
 
-      if (!Number.isFinite(sequence) || !content) {
+      const content = this.sanitizeDiscordContent(contentRawString);
+
+      if (!content.length) {
         return;
       }
 
@@ -312,6 +317,15 @@ class ResponderService {
 
     segments.sort((a, b) => a.sequence - b.sequence);
     return segments;
+  }
+
+  private sanitizeDiscordContent(content: string): string {
+    return content
+      .replace(/\\(<[@#!&])/g, "$1")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/[\u200b\u200c\u200d\uFEFF]/g, "")
+      .replace(/(?<!<)@(\d{15,25})\b/g, "<@$1>");
   }
 
   private normalizeEmotionDelta(input: unknown): EmotionDeltaInstruction[] {

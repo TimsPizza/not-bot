@@ -370,7 +370,7 @@ class BotClient {
         messages[messages.length - 1] ??
         null;
 
-      await this.simulateTyping(
+      this.simulateTyping(
         channelId,
         context.serverConfig?.completionDelaySeconds,
       );
@@ -1035,7 +1035,11 @@ class BotClient {
     content: string,
   ): Promise<void> {
     try {
-      const sentMessage = await channel.send(content);
+      // const sentMessage = await channel.send(content);
+      const sentMessage = await channel.send({
+        content,
+        allowedMentions: { parse: ["users", "roles", "everyone"] },
+      });
       loggerService.logger.info(
         `Sent response to channel ${channelId}: "${content}" (ID: ${sentMessage.id})`,
       );
@@ -1060,7 +1064,7 @@ class BotClient {
       if (!sendableChannel) {
         return;
       }
-      await sendableChannel.send("[!]Bot is thinking for longer");
+      await sendableChannel.send("[!] Bot is thinking for longer");
     } catch (error) {
       loggerService.logger.warn(
         { channelId, err: error },
