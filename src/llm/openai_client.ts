@@ -57,6 +57,7 @@ export async function callChatCompletionApi(
     const response = await client.chat.completions.create({
       model: model,
       messages: messages,
+      reasoning_effort: "medium",
       temperature: temperature,
       max_tokens: maxTokens,
       stream: false, // disable streaming, this may prevent model from returning BOS string
