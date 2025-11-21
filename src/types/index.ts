@@ -60,7 +60,7 @@ export interface StructuredResponseSegment {
 }
 
 export interface ResponderResult {
-  segments: StructuredResponseSegment[];
+  messages: StructuredResponseSegment[]; // aka 'messages' in the raw response
   emotionDeltas?: EmotionDeltaInstruction[];
   proactiveMessages?: ProactiveMessageDraft[];
   cancelScheduleIds?: string[];
@@ -113,7 +113,7 @@ export interface AppConfig {
   // Paths below are now expected to be provided via environment variables
   serverDataPath: string; // Base path for all server-specific data (e.g., data/)
   // presetPersonasPath: string; // Path to the directory containing preset persona JSON files (e.g., personas/)
-  
+
   // 新增：语言配置
   language?: {
     defaultPrimary: SupportedLanguage;
@@ -125,7 +125,7 @@ export interface AppConfig {
       flag: string;
     }>;
   };
-  
+
   // 新增：总结功能配置
   summary?: {
     enabled: boolean;
@@ -144,13 +144,13 @@ export interface AppConfig {
       bannedChannels: string[];
     };
   };
-  
+
   // 新增：频道管理配置
   channelManagement?: {
-    defaultMode: 'whitelist' | 'blacklist';
+    defaultMode: "whitelist" | "blacklist";
     autoManageNewChannels: boolean;
     maxChannelsPerPage: number;
-    sortBy: 'position' | 'name' | 'type';
+    sortBy: "position" | "name" | "type";
   };
 }
 
@@ -211,24 +211,24 @@ export interface ServerConfig {
   maxDailyResponses?: number; // Optional override for global setting (implementation TBD)
   completionDelaySeconds?: number; // Delay before firing completion request
   // Add other server-specific settings here
-  
+
   // 新增：语言配置
   languageConfig?: LanguageConfig;
-  
+
   // 新增：总结功能配置
   summarySettings?: {
     enabled: boolean;
     maxMessagesPerSummary: number;
     cooldownSeconds: number;
-    allowedRoles?: string[];  // 可以使用总结功能的角色ID
+    allowedRoles?: string[]; // 可以使用总结功能的角色ID
     bannedChannels?: string[]; // 禁止总结的频道ID
   };
-  
+
   // 增强：频道管理（支持多选）
   channelConfig?: {
-    allowedChannels: string[];  // 允许的频道ID列表
-    mode: 'whitelist' | 'blacklist';  // 白名单或黑名单模式
-    autoManage: boolean;  // 是否自动管理新频道
+    allowedChannels: string[]; // 允许的频道ID列表
+    mode: "whitelist" | "blacklist"; // 白名单或黑名单模式
+    autoManage: boolean; // 是否自动管理新频道
   };
 }
 
@@ -280,30 +280,30 @@ export interface EmotionSnapshot {
 
 // 新增：语言配置系统
 export enum SupportedLanguage {
-  Auto = "auto",        // 自动检测
-  Chinese = "zh",       // 中文
-  English = "en",       // 英文
-  Japanese = "ja",      // 日文
-  Korean = "ko",        // 韩文
-  Spanish = "es",       // 西班牙文
-  French = "fr",        // 法文
-  German = "de",        // 德文
-  Russian = "ru",       // 俄文
-  Portuguese = "pt",    // 葡萄牙文
+  Auto = "auto", // 自动检测
+  Chinese = "zh", // 中文
+  English = "en", // 英文
+  Japanese = "ja", // 日文
+  Korean = "ko", // 韩文
+  Spanish = "es", // 西班牙文
+  French = "fr", // 法文
+  German = "de", // 德文
+  Russian = "ru", // 俄文
+  Portuguese = "pt", // 葡萄牙文
 }
 
 export interface LanguageConfig {
   primary: SupportedLanguage;
   fallback: SupportedLanguage;
-  autoDetect: boolean;  // 是否启用自动检测
+  autoDetect: boolean; // 是否启用自动检测
 }
 
 // 总结功能相关类型
 export interface SummaryConfig {
   messageId: string;
-  count: number;        // 3-50
-  direction: 'forward' | 'backward' | 'around';
-  sendMode: 'public' | 'private';
+  count: number; // 3-50
+  direction: "forward" | "backward" | "around";
+  sendMode: "public" | "private";
   channelId: string;
 }
 
@@ -349,13 +349,18 @@ export interface ChannelSelectOption {
 export interface ChannelManagementState {
   serverId: string;
   channels: ChannelSelectOption[];
-  mode: 'whitelist' | 'blacklist';
+  mode: "whitelist" | "blacklist";
   pendingChanges: boolean;
 }
 
 // 新增：交互组件相关类型
 export interface InteractionContext {
-  type: 'slash_command' | 'context_menu' | 'modal_submit' | 'button_click' | 'select_menu';
+  type:
+    | "slash_command"
+    | "context_menu"
+    | "modal_submit"
+    | "button_click"
+    | "select_menu";
   userId: string;
   channelId: string;
   guildId?: string;
@@ -365,13 +370,13 @@ export interface InteractionContext {
 export interface ModalConfig {
   customId: string;
   title: string;
-  components: any[];  // Discord.js Modal组件
+  components: any[]; // Discord.js Modal组件
 }
 
 // 新增：总结相关的消息处理类型
 export interface MessageBatch {
   messages: SimpleMessage[];
-  direction: 'forward' | 'backward' | 'around';
+  direction: "forward" | "backward" | "around";
   anchorMessage: SimpleMessage;
   totalCount: number;
 }

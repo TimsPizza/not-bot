@@ -19,6 +19,7 @@ import {
 import { retryWithExponentialBackoff } from "@/utils/retry";
 import { callChatCompletionApi } from "./openai_client";
 import { parseStructuredJson } from "./structuredJson";
+import { parse } from "json5";
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "affinity",
@@ -131,35 +132,8 @@ class ResponderService {
         pendingProactiveMessages: emotionContext?.pendingProactiveMessages,
       });
 
-      const cleanedText = await this.callResponderModelWithRetry(
-        prompt,
-        channelId,
-      );
-
-      if (cleanedText.toLowerCase().includes("as an ai language model")) {
-        loggerService.logger.warn(
-          "LLM response contained boilerplate AI disclaimer. Discarding.",
-        );
-        return null;
-      }
-
-      const responderOutput = this.parseResponderOutput(cleanedText);
-      if (!responderOutput) {
-        loggerService.logger.warn(
-          "Failed to parse structured response from LLM. Falling back to single message.",
-        );
-        return {
-          segments: [
-            {
-              sequence: 1,
-              delayMs: 0,
-              content: cleanedText,
-            },
-          ],
-        };
-      }
-
-      return responderOutput;
+      const result = await this.callResponderModelWithRetry(prompt, channelId);
+      return result;
     } catch (error) {
       if (error instanceof LLMRetryError) {
         throw error;
@@ -172,8 +146,9 @@ class ResponderService {
   private async callResponderModelWithRetry(
     prompt: BuiltPrompt,
     channelId: string,
-  ): Promise<string> {
+  ): Promise<ResponderResult | null> {
     try {
+      // should check shape and throw err here
       return await retryWithExponentialBackoff(
         async () => {
           const rawResponse = await callChatCompletionApi(
@@ -192,7 +167,14 @@ class ResponderService {
           if (!trimmed) {
             throw new Error("Responder LLM returned empty response.");
           }
-          return trimmed;
+          if (trimmed.toLowerCase().includes("as an ai language model")) {
+            loggerService.logger.warn(
+              "LLM response contained boilerplate AI disclaimer. Discarding.",
+            );
+            throw new Error("Responder LLM returned AI disclaimer.");
+          }
+          const parsed = this.parseResponderOutput(trimmed);
+          return parsed;
         },
         {
           maxAttempts: RESPONDER_MAX_ATTEMPTS,
@@ -227,12 +209,15 @@ class ResponderService {
 
   private parseResponderOutput(raw: string): ResponderResult | null {
     if (!raw) {
-      return null;
+      throw new Error("Empty responder LLM response.");
     }
 
     const parsed = parseStructuredJson(raw, "responder");
     if (!parsed) {
-      return null;
+      throw new Error("Failed to parse responder LLM response as JSON.");
+    }
+    if (!this.isParsedJsonExpectedShape(parsed)) {
+      throw new Error("Unexpected responder LLM response shape");
     }
 
     let segmentsSource: unknown;
@@ -240,23 +225,10 @@ class ResponderService {
     let proactiveSource: unknown;
     let cancelSource: unknown;
 
-    if (Array.isArray(parsed)) {
-      segmentsSource = parsed;
-    } else if (parsed && typeof parsed === "object") {
-      segmentsSource = (parsed as { messages?: unknown }).messages;
-      deltaSource = (parsed as { emotion_delta?: unknown }).emotion_delta;
-      proactiveSource = (parsed as { proactive_messages?: unknown })
-        .proactive_messages;
-      cancelSource = (parsed as { cancel_schedule_ids?: unknown })
-        .cancel_schedule_ids;
-    }
-
-    if (!Array.isArray(segmentsSource)) {
-      loggerService.logger.warn(
-        "Structured response JSON did not contain an array of messages.",
-      );
-      return null;
-    }
+    segmentsSource = parsed.messages;
+    deltaSource = parsed.emotionDeltas;
+    proactiveSource = parsed.proactiveMessages;
+    cancelSource = parsed.cancelScheduleIds;
 
     const segments = this.normalizeSegments(segmentsSource);
     if (!segments.length) {
@@ -268,13 +240,21 @@ class ResponderService {
     const cancelScheduleIds = this.normalizeCancelIds(cancelSource);
 
     return {
-      segments,
+      messages: segments,
       emotionDeltas: emotionDeltas.length > 0 ? emotionDeltas : undefined,
       proactiveMessages:
         proactiveMessages.length > 0 ? proactiveMessages : undefined,
       cancelScheduleIds:
         cancelScheduleIds.length > 0 ? cancelScheduleIds : undefined,
     };
+  }
+
+  private isParsedJsonExpectedShape(input: unknown): input is ResponderResult {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      return false;
+    }
+
+    return "messages" in input;
   }
 
   private normalizeSegments(input: unknown): StructuredResponseSegment[] {

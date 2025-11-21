@@ -8,6 +8,10 @@ const BOS_MARKERS = [
   "<|begin_of_text|>",
   "<|im_start|>",
   "<|im_end|>",
+  "<|tool_call_start|>",
+  "<|tool_call_end|>",
+  "<|tool_calls_section_start|>",
+  "<|tool_calls_section_end|>",
 ];
 
 function stripCodeFence(payload: string): string {

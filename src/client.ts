@@ -474,7 +474,7 @@ class BotClient {
         pendingProactiveSummaries = getPendingSummaries(channelId);
       }
 
-      if (!responseResult.segments.length) {
+      if (!responseResult.messages.length) {
         loggerService.logger.warn(
           { channelId },
           "Responder returned empty segments. Nothing to send.",
@@ -482,7 +482,7 @@ class BotClient {
         return;
       }
 
-      await this.enqueueResponseSegments(channelId, responseResult.segments);
+      await this.enqueueResponseSegments(channelId, responseResult.messages);
 
       if (finalTargetMessage) {
         contextManagerService.markMessageAsResponded(
@@ -1064,7 +1064,7 @@ class BotClient {
       if (!sendableChannel) {
         return;
       }
-      await sendableChannel.send("[!] Bot is thinking for longer");
+      // await sendableChannel.send("[!] Bot is thinking for longer");
     } catch (error) {
       loggerService.logger.warn(
         { channelId, err: error },
