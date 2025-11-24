@@ -291,12 +291,12 @@ class BotClient {
           }
 
           evaluationResult = await llmEvaluatorService.evaluateMessages(
+            channelId,
             context.serverConfig?.responsiveness ?? 0.6,
             context.evaluationPromptTemplate,
             context.personaDefinition.details,
             this.botId,
             messages,
-            context.channelContextMessages,
             evaluationEmotionSnapshots,
             pendingProactiveSummaries,
           );

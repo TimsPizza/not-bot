@@ -1,5 +1,6 @@
 // src/llm/llm_evaluator.ts
 import configService from "@/config";
+import contextManagerService from "@/context";
 import loggerService from "@/logger";
 import { PromptBuilder } from "@/prompt";
 import type { BuiltPrompt } from "@/prompt";
@@ -43,21 +44,21 @@ class LLMEvaluatorService {
   // Removed loadConfigAndPrompts as prompts are no longer loaded here
 
   /**
-   * @description Evaluates a batch of messages using the secondary LLM, considering channel context, responsiveness, and specific persona instructions.
+   * @description Evaluates a batch of messages using the secondary LLM, considering persisted channel context, responsiveness, and specific persona instructions.
+   * @param channelId The channel whose context should be loaded for evaluation.
    * @param responsiveness The responsiveness factor for the current context (e.g., server).
    * @param evaluationPromptTemplate The base template for the evaluation prompt.
    * @param personaDetails The specific details/instructions for the current persona.
    * @param batchMessages An array of SimpleMessage objects from the current batch to evaluate.
-   * @param channelContextMessages An array of SimpleMessage objects representing the broader channel context.
    * @returns A promise resolving to the LLMEvaluationResult or null if an error occurs.
    */
   public async evaluateMessages(
+    channelId: string,
     responsiveness: number,
     evaluationPromptTemplate: string, // Added template
     personaDetails: string, // Added persona details
     botUserId: string,
     batchMessages: SimpleMessage[],
-    channelContextMessages: SimpleMessage[],
     emotionSnapshots?: EmotionSnapshot[],
     pendingProactiveMessages?: ProactiveMessageSummary[],
   ): Promise<LLMEvaluationResult | null> {
@@ -90,6 +91,9 @@ class LLMEvaluatorService {
       );
       return null;
     }
+
+    const contextSnapshot = contextManagerService.getContext(channelId);
+    const channelContextMessages = contextSnapshot?.messages ?? [];
 
     try {
       const prompt = PromptBuilder.build({
