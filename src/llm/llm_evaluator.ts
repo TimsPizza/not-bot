@@ -9,7 +9,6 @@ import {
   EmotionMetric,
   EmotionSnapshot,
   LLMEvaluationResult,
-  ProactiveMessageDraft,
   ProactiveMessageSummary,
   SimpleMessage,
 } from "@/types";
@@ -169,13 +168,6 @@ class LLMEvaluatorService {
         result.emotionDeltas = emotionDeltas;
       }
 
-      const proactiveDeltas = parseProactiveMessagesArray(
-        structured.proactive_messages,
-      );
-      if (proactiveDeltas.length > 0) {
-        result.proactiveMessages = proactiveDeltas;
-      }
-
       const cancelScheduleIds = parseCancelIds(structured.cancel_schedule_ids);
       if (cancelScheduleIds.length > 0) {
         result.cancelScheduleIds = cancelScheduleIds;
@@ -260,7 +252,7 @@ const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
 
 const EVALUATOR_MAX_ATTEMPTS = 5;
 const EVALUATOR_BASE_DELAY_MS = 10_000;
-const EVALUATOR_MAX_DELAY_MS = 60_000;
+const EVALUATOR_MAX_DELAY_MS = 30_000;
 
 function parseEmotionDeltaArray(input: unknown): EmotionDeltaInstruction[] {
   if (!Array.isArray(input)) {
@@ -303,39 +295,6 @@ function parseEmotionDeltaArray(input: unknown): EmotionDeltaInstruction[] {
   });
 
   return deltas;
-}
-
-function parseProactiveMessagesArray(input: unknown): ProactiveMessageDraft[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  const drafts: ProactiveMessageDraft[] = [];
-  input.forEach((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return;
-    }
-    const sendAt = (entry as { send_at?: unknown }).send_at;
-    const content = (entry as { content?: unknown }).content;
-    if (typeof sendAt !== "string" || typeof content !== "string") {
-      return;
-    }
-    const idValue = (entry as { id?: unknown }).id;
-    const reason = (entry as { reason?: unknown }).reason;
-    const draft: ProactiveMessageDraft = {
-      sendAt,
-      content,
-    };
-    if (typeof idValue === "string" && idValue.trim().length > 0) {
-      draft.id = idValue.trim().toLowerCase();
-    }
-    if (typeof reason === "string" && reason.trim().length > 0) {
-      draft.reason = reason.trim();
-    }
-    drafts.push(draft);
-  });
-
-  return drafts;
 }
 
 function parseCancelIds(input: unknown): string[] {

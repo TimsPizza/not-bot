@@ -173,7 +173,15 @@ class ResponderService {
             );
             throw new Error("Responder LLM returned AI disclaimer.");
           }
-          const parsed = this.parseResponderOutput(trimmed);
+          const jsonMatch = trimmed.match(/```json\s*([\s\S]+?)\s*```/);
+          const matchResult = jsonMatch && jsonMatch[1] ? jsonMatch[1] : null;
+          if (!matchResult) {
+            loggerService.logger.warn(
+              "Responder LLM response did not contain JSON code block. Attempting to parse entire response.",
+            );
+            throw new Error("Responder LLM returned unexpected response");
+          }
+          const parsed = this.parseResponderOutput(matchResult);
           return parsed;
         },
         {
