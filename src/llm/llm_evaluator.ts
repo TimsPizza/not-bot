@@ -1,9 +1,10 @@
 // src/llm/llm_evaluator.ts
 import configService from "@/config";
 import contextManagerService from "@/context";
+import { LLMRetryError } from "@/errors/LLMRetryError";
 import loggerService from "@/logger";
-import { PromptBuilder } from "@/prompt";
 import type { BuiltPrompt } from "@/prompt";
+import { PromptBuilder } from "@/prompt";
 import {
   AppConfig,
   EmotionDeltaInstruction,
@@ -13,10 +14,9 @@ import {
   ProactiveMessageSummary,
   SimpleMessage,
 } from "@/types";
+import { retryWithExponentialBackoff } from "@/utils/retry";
 import { callChatCompletionApi } from "./openai_client";
 import { parseStructuredJson } from "./structuredJson";
-import { retryWithExponentialBackoff } from "@/utils/retry";
-import { LLMRetryError } from "@/errors/LLMRetryError";
 
 class LLMEvaluatorService {
   private static instance: LLMEvaluatorService;
@@ -126,7 +126,7 @@ class LLMEvaluatorService {
 
       // --- Parse and Validate JSON Response ---
       const jsonMatch = rawContent.match(/```json\s*([\s\S]+?)\s*```/);
-      const parsedJson = parseStructuredJson(
+      const [parsedJson, err] = parseStructuredJson(
         jsonMatch && jsonMatch[1] ? jsonMatch[1] : rawContent,
         "evaluator",
       );
