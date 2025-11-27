@@ -234,6 +234,9 @@ class ResponderService {
 
       const assistantMessage = choice.message;
       const toolCalls = assistantMessage.tool_calls;
+      loggerService.logger.debug(
+        `Responder LLM attempt ${attempts} completed.\nTool calls: ${toolCalls?.length ?? 0}.\nContent: ${assistantMessage.content}`,
+      );
 
       if (!toolCalls || toolCalls.length === 0) {
         const content = this.normalizeAssistantContent(
@@ -265,8 +268,8 @@ class ResponderService {
           content: [
             "Your last response was invalid.",
             error ? `Issue: ${error}.` : null,
-            "If you intended to call a tool, emit a proper tool call now (do not place tool instructions in message content).",
-            "If you intended to finish, re-emit a single response as a JSON code block using the exact given shape",
+            "If you intended to call a tool or the history tool calls were not completed, or the users explicitly questioned that whether your previous responses were incorrect, emit a proper tool call now.",
+            "If you confirm that proper tool calls results have been gathered and intend to finish , re-emit a single response as a JSON code block using the exact given shape",
           ]
             .filter(Boolean)
             .join(" "),

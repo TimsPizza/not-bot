@@ -83,6 +83,21 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
       ].join("\n"),
     );
 
+    blocks.push(
+      [
+        "Failed tool attempt recovery:",
+        "- If earlier assistant messages promised to search or retrieve info but no concrete results or answer appear in the conversation, assume the previous tool run failed.",
+        "- Do NOT respond with “already doing it” or similar; instead, re-run the necessary tools now and return the result.",
+      ].join("\n"),
+    );
+
+    blocks.push(
+      [
+        "Search language preference:",
+        "- Prefer English keywords/queries when invoking external search tools unless the user explicitly requests another language.",
+      ].join("\n"),
+    );
+
     if (pendingProactiveMessages && pendingProactiveMessages.length > 0) {
       blocks.push(formatPendingProactiveMessageBlock(pendingProactiveMessages));
     }
