@@ -1,16 +1,15 @@
+import configService from "@/config"; // To potentially load persona list later
+import loggerService from "@/logger";
 import { REST } from "@discordjs/rest";
 import {
-  Routes,
   APIApplicationCommandOptionChoice,
+  Routes,
 } from "discord-api-types/v10";
 import {
-  SlashCommandBuilder,
-  PermissionFlagsBits,
   ChannelType,
+  SlashCommandBuilder
 } from "discord.js";
 import dotenv from "dotenv";
-import loggerService from "@/logger";
-import configService from "@/config"; // To potentially load persona list later
 import { messageSummaryCommand } from "./context/summarize.js";
 
 dotenv.config();
@@ -242,16 +241,16 @@ if (personaChoices.length === 0) {
         .addSubcommand((subcommand) =>
           subcommand
             .setName("context")
-            .setDescription("Set additional context length (max 50 messages)")
+            .setDescription("Set additional context length (max 200 messages)")
             .addIntegerOption((option) =>
               option
                 .setName("messages")
                 .setDescription(
-                  "Number of recent messages to keep in context (1-50)",
+                  "Number of recent messages to keep in context (1-200)",
                 )
                 .setRequired(true)
                 .setMinValue(1)
-                .setMaxValue(50),
+                .setMaxValue(200),
             ),
         )
         .addSubcommand((subcommand) =>

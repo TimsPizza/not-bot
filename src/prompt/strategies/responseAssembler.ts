@@ -87,7 +87,8 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
       [
         "Failed tool attempt recovery:",
         "- If earlier assistant messages promised to search or retrieve info but no concrete results or answer appear in the conversation, assume the previous tool run failed.",
-        "- Do NOT respond with “already doing it” or similar; instead, re-run the necessary tools now and return the result.",
+        "- Do NOT respond with “already doing it”, “still looking”, or other status-only text; You need to immediately and completely reconsider the user's request and ignore the prior status-only messages.",
+        "- If the tool fails again, state the failure and what to change (query, site, timeframe) instead of promising to keep searching.",
       ].join("\n"),
     );
 
@@ -172,6 +173,7 @@ function buildResponseOutputInstruction(
       ").",
     "- `proactive_messages` is optional. Each entry must include `send_at` (ISO 8601 UTC) and `content`; include `id` if modifying an existing schedule.",
     "- `cancel_schedule_ids` is optional. Only include IDs that should be cancelled.",
+    "- Do NOT emit status-only messages like “searching” or “already doing it”; the first message must contain either the actual answer/result (after running tools) or a brief failure note with what to change.",
     "- Output nothing outside the fenced code block.",
   ].join("\n");
 }

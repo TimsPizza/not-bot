@@ -192,7 +192,7 @@ export class MessageSummarizer {
     const maxMessages =
       serverConfig?.summarySettings?.maxMessagesPerSummary ||
       globalConfig.summary?.maxMessages ||
-      50;
+      200;
 
     if (config.count < minMessages || config.count > maxMessages) {
       throw new Error(

@@ -18,6 +18,7 @@ import {
   StructuredResponseSegment,
 } from "@/types";
 import { retryWithExponentialBackoff } from "@/utils/retry";
+import { randomUUID } from "crypto";
 import {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -115,6 +116,7 @@ class ResponderService {
     // Get context for the channel
     const context = contextManagerService.getContext(channelId);
     const contextMessages = context?.messages || [];
+    const serverId = context?.serverId;
     if (contextMessages.length === 0) {
       loggerService.logger.warn(
         `No context found for channel ${channelId}. Cannot generate response.`,
@@ -143,6 +145,8 @@ class ResponderService {
       const result = await this.callResponderModelWithRetry(
         prompt,
         channelId,
+        serverId,
+        botUserId,
         availableTools,
       );
       return result;
@@ -158,12 +162,20 @@ class ResponderService {
   private async callResponderModelWithRetry(
     prompt: BuiltPrompt,
     channelId: string,
+    serverId: string | undefined,
+    botUserId: string,
     tools: ChatCompletionTool[],
   ): Promise<ResponderResult | null> {
     try {
       return await retryWithExponentialBackoff(
         async () => {
-          const result = await this.runResponderConversation(prompt, tools);
+          const result = await this.runResponderConversation(
+            prompt,
+            channelId,
+            serverId,
+            botUserId,
+            tools,
+          );
           if (!result) {
             throw new Error("Responder LLM returned null response.");
           }
@@ -202,6 +214,9 @@ class ResponderService {
 
   private async runResponderConversation(
     prompt: BuiltPrompt,
+    channelId: string,
+    serverId: string | undefined,
+    botUserId: string,
     tools: ChatCompletionTool[],
   ): Promise<ResponderResult | null> {
     const messageHistory: ChatCompletionMessageParam[] = [...prompt.messages];
@@ -253,23 +268,6 @@ class ResponderService {
 
         const { result, error } = this.tryParseResponderContent(content);
         if (result) {
-          if (this.isStatusOnlySegments(result.messages)) {
-            schemaRepairs += 1;
-            if (schemaRepairs > RESPONDER_MAX_SCHEMA_REPAIRS) {
-              throw new Error(
-                "Responder LLM returned status-only content after repairs.",
-              );
-            }
-            messageHistory.push({
-              role: "user",
-              content: [
-                "Status-only responses are not allowed.",
-                "Provide the actual answer using the JSON schema, including tool-derived results or a brief failure reason and what to change.",
-                "If tools are needed, call them now instead of replying with progress updates.",
-              ].join(" "),
-            });
-            continue;
-          }
           return result;
         }
 
@@ -313,6 +311,15 @@ class ResponderService {
           tool_call_id: toolCall.id,
           content: serializedResult,
         });
+
+        this.appendToolInteractionToContext(
+          channelId,
+          serverId,
+          botUserId,
+          toolCall.function.name,
+          toolCall.function.arguments,
+          serializedResult,
+        );
       }
 
       toolIterations += 1;
@@ -587,27 +594,50 @@ class ResponderService {
       .filter((value): value is string => Boolean(value));
   }
 
-  private isStatusOnlySegments(segments: StructuredResponseSegment[]): boolean {
-    if (!Array.isArray(segments) || segments.length === 0) {
-      return false;
+  private appendToolInteractionToContext(
+    channelId: string,
+    serverId: string | undefined,
+    botUserId: string,
+    toolName: string,
+    rawArgs: string,
+    rawResult: string,
+  ): void {
+    if (!serverId) {
+      return;
     }
-    const statusPatterns = [
-      /already\s+doing/i,
-      /working\s+on/i,
-      /still\s+working/i,
-      /still\s+searching/i,
-      /searching/i,
-      /in\s+progress/i,
-      /马上就好/i,
-      /正在查/i,
-      /正在找/i,
-      /正在做/i,
-      /稍等/i,
-      /等一下/i,
-      /别急/i,
+
+    const now = Date.now();
+    const baseMessage: Omit<SimpleMessage, "id" | "content"> = {
+      channelId,
+      guildId: serverId === "DM" ? null : serverId,
+      authorId: botUserId,
+      authorUsername: "llm-bot (tool)",
+      timestamp: now,
+      mentionedUsers: [],
+      mentionedRoles: [],
+      mentionsEveryone: false,
+      isBot: true,
+      hasBeenRepliedTo: true,
+      respondedTo: true,
+    };
+
+    const truncate = (value: string, max = 1500) =>
+      value.length > max ? `${value.slice(0, max)}…` : value;
+
+    const messages: SimpleMessage[] = [
+      {
+        ...baseMessage,
+        id: randomUUID(), // invisible to discord so random ID is fine
+        content: `[tool_call] ${toolName} args: ${truncate(rawArgs ?? "")}`,
+      },
+      {
+        ...baseMessage,
+        id: randomUUID(),
+        content: `[tool_result] ${toolName} result: ${truncate(rawResult ?? "")}`,
+      },
     ];
-    const content = segments.map((s) => s.content).join(" ").toLowerCase();
-    return statusPatterns.some((re) => re.test(content));
+
+    contextManagerService.updateContext(channelId, serverId, messages);
   }
 }
 

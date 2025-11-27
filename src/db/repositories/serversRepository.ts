@@ -18,7 +18,7 @@ type ServerUpdate = Partial<ServerInsert>;
 const SERVER_DEFAULT_TARGET_ID = "__server_default__";
 const MIN_COMPLETION_DELAY = 3;
 const MAX_COMPLETION_DELAY = 120;
-const MAX_CONTEXT_MESSAGES = 50;
+const MAX_CONTEXT_MESSAGES = 200;
 const MIN_CONTEXT_MESSAGES = 1;
 
 function clampCompletionDelay(value?: number | null): number {
@@ -115,7 +115,7 @@ function buildDomainConfig(
   const summarySettings = row.summaryEnabled
     ? {
         enabled: Boolean(row.summaryEnabled),
-        maxMessagesPerSummary: row.summaryMaxMessages ?? 50,
+        maxMessagesPerSummary: row.summaryMaxMessages ?? 200,
         cooldownSeconds: row.summaryCooldownSeconds ?? 0,
         allowedRoles: summaryAllowedRoles,
         bannedChannels: summaryBannedChannels,
@@ -123,7 +123,7 @@ function buildDomainConfig(
     : summaryAllowedRoles.length || summaryBannedChannels.length
       ? {
           enabled: Boolean(row.summaryEnabled),
-          maxMessagesPerSummary: row.summaryMaxMessages ?? 50,
+          maxMessagesPerSummary: row.summaryMaxMessages ?? 200,
           cooldownSeconds: row.summaryCooldownSeconds ?? 0,
           allowedRoles: summaryAllowedRoles,
           bannedChannels: summaryBannedChannels,

@@ -1,10 +1,10 @@
 // src/context/index.ts
 import configService from "@/config";
 import {
-  initializeDataStore,
   getRecentMessages as fetchRecentMessagesFromDb,
-  persistMessages,
+  initializeDataStore,
   markMessageResponded as markMessageRespondedInDb,
+  persistMessages,
 } from "@/db/datastore";
 import loggerService from "@/logger";
 import {
@@ -20,8 +20,8 @@ class ContextManagerService {
 
   private contextCache = new QuickLRU<string, ChannelContext>({ maxSize: 500 });
   private serverDataPath: string | null = null;
-  private contextMaxMessages = 20;
-  private contextMaxAgeSeconds = 3600;
+  private contextMaxMessages = 200;
+  private contextMaxAgeSeconds = 60 * 60 * 24 * 7; // 7 days
   private isInitialized = false;
 
   private constructor() {
@@ -92,7 +92,8 @@ class ContextManagerService {
         serverId: recentMessages[0]?.guildId ?? "DM",
         channelId,
         messages: recentMessages,
-        lastUpdatedAt: recentMessages[recentMessages.length - 1]?.timestamp ?? Date.now(),
+        lastUpdatedAt:
+          recentMessages[recentMessages.length - 1]?.timestamp ?? Date.now(),
       };
       this.contextCache.set(channelId, context);
       return context;
@@ -131,7 +132,8 @@ class ContextManagerService {
         channelId,
         serverId: serverId === "DM" ? null : serverId,
         type: serverId === "DM" ? "dm" : "guild_text",
-        ownerUserId: serverId === "DM" ? newMessages[0]?.authorId ?? null : null,
+        ownerUserId:
+          serverId === "DM" ? (newMessages[0]?.authorId ?? null) : null,
         messages: newMessages,
       });
     } catch (error) {
@@ -160,8 +162,7 @@ class ContextManagerService {
 
   public markMessageAsResponded(channelId: string, messageId: string): void {
     const context =
-      this.contextCache.get(channelId) ??
-      this.getContext(channelId);
+      this.contextCache.get(channelId) ?? this.getContext(channelId);
 
     if (!context) {
       loggerService.logger.warn(

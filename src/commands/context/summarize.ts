@@ -100,10 +100,12 @@ async function showSummaryConfigSelector(
       // 合并全局和服务器设置
       minMessages: globalSummaryConfig?.minMessages || 3,
       maxMessages: Math.min(
-        serverConfig.summarySettings.maxMessagesPerSummary || 50,
-        globalSummaryConfig?.maxMessages || 50,
+        serverConfig.summarySettings.maxMessagesPerSummary || 50, // default
+        globalSummaryConfig?.maxMessages || 50, // default
       ),
-      presetCounts: globalSummaryConfig?.presetCounts || [5, 10, 15, 20],
+      presetCounts: globalSummaryConfig?.presetCounts || [
+        5, 10, 15, 20, 50, 100,
+      ],
     };
   } else if (globalSummaryConfig) {
     // 服务器没有设置，使用全局默认设置
@@ -434,14 +436,14 @@ async function showCustomCountModal(
 
   const modal = new ModalBuilder()
     .setCustomId(`summary_custom_count_${messageId}`)
-    .setTitle("自定义消息数量");
+    .setTitle("customize message count for summary");
 
   const countInput = new TextInputBuilder()
     .setCustomId("message_count")
-    .setLabel("消息数量")
+    .setLabel("Number of messages to summarize")
     .setStyle(TextInputStyle.Short)
     .setPlaceholder(
-      `请输入 ${summaryConfig?.minMessages || 3} 到 ${summaryConfig?.maxMessages || 50} 之间的数字`,
+      `Please enter a number between ${summaryConfig?.minMessages || 3} and ${summaryConfig?.maxMessages || 200}`,
     )
     .setMinLength(1)
     .setMaxLength(2)
@@ -467,7 +469,7 @@ export async function handleCustomCountModal(
 
     if (!messageId) {
       await interaction.reply({
-        content: "❌ 无效的消息ID",
+        content: "❌ Invalid message ID",
         ephemeral: true,
       });
       return;
@@ -480,11 +482,11 @@ export async function handleCustomCountModal(
     const configService = ConfigService.getInstance();
     const summaryConfig = configService.getConfig().summary;
     const minMessages = summaryConfig?.minMessages || 3;
-    const maxMessages = summaryConfig?.maxMessages || 50;
+    const maxMessages = summaryConfig?.maxMessages || 200;
 
     if (isNaN(count) || count < minMessages || count > maxMessages) {
       await interaction.reply({
-        content: `❌ 请输入有效的数字 (${minMessages}-${maxMessages})`,
+        content: `❌ Please enter a valid number between ${minMessages} and ${maxMessages}`,
         ephemeral: true,
       });
       return;
@@ -505,7 +507,7 @@ export async function handleCustomCountModal(
 
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply({
-        content: "❌ 处理自定义数量时发生错误",
+        content: "❌ Error processing custom count",
         ephemeral: true,
       });
     }

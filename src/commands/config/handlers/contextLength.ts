@@ -1,7 +1,7 @@
 import configService from "@/config";
 import type { ConfigCommandContext } from "../types";
 
-const MAX_CONTEXT_MESSAGES = 50;
+const MAX_CONTEXT_MESSAGES = 200;
 const MIN_CONTEXT_MESSAGES = 1;
 
 export async function handleContextLengthSubcommand(
