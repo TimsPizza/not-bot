@@ -119,7 +119,7 @@ class LLMEvaluatorService {
       }
 
       loggerService.logger.debug(
-        `Sending ${prompt.messages.length} message parts (system + user with combined context/batch) to LLM Evaluator using effective threshold ${effectiveThreshold.toFixed(2)}.`,
+        `Sending ${batchMessages.length} message to LLM evaluator.`,
       );
 
       const rawContent = await this.callEvaluatorModelWithRetry(prompt);
