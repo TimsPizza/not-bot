@@ -253,6 +253,23 @@ class ResponderService {
 
         const { result, error } = this.tryParseResponderContent(content);
         if (result) {
+          if (this.isStatusOnlySegments(result.messages)) {
+            schemaRepairs += 1;
+            if (schemaRepairs > RESPONDER_MAX_SCHEMA_REPAIRS) {
+              throw new Error(
+                "Responder LLM returned status-only content after repairs.",
+              );
+            }
+            messageHistory.push({
+              role: "user",
+              content: [
+                "Status-only responses are not allowed.",
+                "Provide the actual answer using the JSON schema, including tool-derived results or a brief failure reason and what to change.",
+                "If tools are needed, call them now instead of replying with progress updates.",
+              ].join(" "),
+            });
+            continue;
+          }
           return result;
         }
 
@@ -568,6 +585,29 @@ class ResponderService {
         typeof value === "string" ? value.trim().toLowerCase() : null,
       )
       .filter((value): value is string => Boolean(value));
+  }
+
+  private isStatusOnlySegments(segments: StructuredResponseSegment[]): boolean {
+    if (!Array.isArray(segments) || segments.length === 0) {
+      return false;
+    }
+    const statusPatterns = [
+      /already\s+doing/i,
+      /working\s+on/i,
+      /still\s+working/i,
+      /still\s+searching/i,
+      /searching/i,
+      /in\s+progress/i,
+      /马上就好/i,
+      /正在查/i,
+      /正在找/i,
+      /正在做/i,
+      /稍等/i,
+      /等一下/i,
+      /别急/i,
+    ];
+    const content = segments.map((s) => s.content).join(" ").toLowerCase();
+    return statusPatterns.some((re) => re.test(content));
   }
 }
 
