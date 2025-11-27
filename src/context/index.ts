@@ -106,6 +106,10 @@ class ContextManagerService {
     }
   }
 
+  public getCachedContexts(): ChannelContext[] {
+    return Array.from(this.contextCache.values());
+  }
+
   public updateContext(
     channelId: string,
     serverId: string,

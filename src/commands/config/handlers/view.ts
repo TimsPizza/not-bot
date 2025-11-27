@@ -1,5 +1,6 @@
 import configService from "@/config";
 import loggerService from "@/logger";
+import { getSilenceScheduler } from "@/scheduler/silenceTopicScheduler";
 import type { ConfigCommandContext } from "../types";
 
 export async function handleViewSubcommand(
@@ -101,6 +102,21 @@ export async function handleViewSubcommand(
     `**Advanced Limits:**\n${advancedInfo}\n\n` +
     `**Summary Settings:**\n${summaryInfo}\n\n` +
     `**Channel Rules:**\n${channelRuleInfo}`;
+
+  const scheduler = getSilenceScheduler();
+  if (scheduler) {
+    const nextSeconds = scheduler.getNextAllowedInSeconds(
+      interaction.channelId ?? serverConfig.serverId,
+    );
+    const nextInfo =
+      typeof nextSeconds === "number"
+        ? `${nextSeconds}s (approx)`
+        : "Unknown / not scheduled";
+    await interaction.editReply(
+      `${configView}\n\n**Topic Starter:**\n- Next allowed attempt: ${nextInfo}`,
+    );
+    return;
+  }
 
   await interaction.editReply(configView);
 }

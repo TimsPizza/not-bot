@@ -32,6 +32,9 @@ import {
   SimpleMessage,
   StructuredResponseSegment,
 } from "@/types";
+import SilenceTopicScheduler, {
+  setSilenceScheduler,
+} from "@/scheduler/silenceTopicScheduler";
 import {
   CacheType, // Added
   ChannelType,
@@ -63,6 +66,7 @@ class BotClient {
   private botId: string | null = null;
   private responseQueues: Map<string, Promise<void>> = new Map();
   private proactiveInterval: NodeJS.Timeout | null = null;
+  private silenceTopicScheduler: SilenceTopicScheduler;
   private processingChannels: Set<string> = new Set();
   private deferredChannelBatches: Map<string, SimpleMessage[]> = new Map();
 
@@ -82,6 +86,10 @@ class BotClient {
     this.registerEventHandlers();
     this.connectBufferToPipeline(); // Connect the buffer flush to the evaluation pipeline
     this.startProactiveDispatchLoop();
+    this.silenceTopicScheduler = new SilenceTopicScheduler(
+      this.enqueueResponseSegments.bind(this),
+    );
+    setSilenceScheduler(this.silenceTopicScheduler);
   }
 
   /**
@@ -93,6 +101,7 @@ class BotClient {
       loggerService.logger.info(
         `Logged in as ${readyClient.user.tag} (ID: ${this.botId})`,
       );
+      this.silenceTopicScheduler.start(this.botId);
       // You might want to set the bot's status here
       readyClient.user.setActivity("Listening to chat...");
     });

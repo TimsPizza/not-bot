@@ -1,4 +1,4 @@
-export type LLMServiceName = "responder" | "evaluator";
+export type LLMServiceName = "responder" | "evaluator" | "topic-starter";
 
 export class LLMRetryError extends Error {
   public readonly service: LLMServiceName;

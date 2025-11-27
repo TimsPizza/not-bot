@@ -9,6 +9,18 @@ import {
   ProactiveMessageSummary,
 } from "@/types";
 
+export interface TopicStarterPromptContext {
+  useCase: "topicStarter";
+  systemPromptTemplate: string;
+  personaDetails: string;
+  personaPrompts: PersonaPrompts | null;
+  contextMessages: SimpleMessage[];
+  botUserId: string;
+  languageConfig?: { primary: string; fallback: string; autoDetect: boolean };
+  emotionSnapshots?: EmotionSnapshot[];
+  emotionDeltaCaps?: Partial<Record<EmotionMetric, number>>;
+}
+
 export interface ResponsePromptContext {
   useCase: "response";
   systemPromptTemplate: string;
@@ -52,7 +64,8 @@ export interface SummaryPromptContext {
 export type PromptContext =
   | ResponsePromptContext
   | EvaluationPromptContext
-  | SummaryPromptContext;
+  | SummaryPromptContext
+  | TopicStarterPromptContext;
 
 export interface BuiltPrompt {
   messages: ChatCompletionMessageParam[];
