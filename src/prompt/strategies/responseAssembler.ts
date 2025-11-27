@@ -89,6 +89,7 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
         "- If earlier assistant messages promised to search or retrieve info but no concrete results or answer appear in the conversation, assume the previous tool run failed.",
         "- Do NOT respond with “already doing it”, “still looking”, or other status-only text; You need to immediately and completely reconsider the user's request and ignore the prior status-only messages.",
         "- If the tool fails again, state the failure and what to change (query, site, timeframe) instead of promising to keep searching.",
+        "- If you see no prior `[tool_call]` / `[tool_result]` entries for a promised action, assume it never ran; call the tools now and deliver the result or a concrete failure reason.",
       ].join("\n"),
     );
 
