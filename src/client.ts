@@ -460,7 +460,7 @@ class BotClient {
         messages[messages.length - 1] ??
         null;
 
-      this.simulateTyping(
+      const typingStop = this.simulateTyping(
         channelId,
         context.serverConfig?.completionDelaySeconds,
       );
@@ -532,6 +532,7 @@ class BotClient {
           clearTimeout(thinkingTimeout);
           thinkingTimeout = null;
         }
+        await typingStop.stop();
       }
 
       if (!responseResult) {
@@ -731,69 +732,62 @@ class BotClient {
     return Array.from(ids).slice(0, 25);
   }
 
-  private async simulateTyping(
+  private simulateTyping(
     channelId: string,
     delaySeconds?: number,
-  ): Promise<void> {
-    // const totalDelayMs = Math.max(0, Math.round((delaySeconds ?? 0) * 1000));
-    // override, as chat completion will be waiting for 20s before sending 'thinking for longer' msg
-    // to keep users updated
-    const totalDelayMs = 15000;
+  ): { stop: () => Promise<void> } {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const totalDelayMs = Math.max(
+      0,
+      Math.round((delaySeconds ?? 15) * 1000),
+    );
+    const burstIntervalMs = 3000;
 
-    let sendableChannel: TextChannel | DMChannel | null = null;
-    try {
-      const fetchedChannel = await this.client.channels.fetch(channelId);
-      if (!fetchedChannel) {
-        loggerService.logger.debug(
-          { channelId },
-          "Failed to fetch channel for typing simulation.",
-        );
+    const loop = async () => {
+      let sendableChannel: TextChannel | DMChannel | null = null;
+      try {
+        const fetchedChannel = await this.client.channels.fetch(channelId);
+        if (!fetchedChannel) {
+          return;
+        }
+        if (fetchedChannel instanceof TextChannel) {
+          sendableChannel = fetchedChannel;
+        } else if (fetchedChannel instanceof DMChannel) {
+          sendableChannel = fetchedChannel;
+        }
+      } catch {
         return;
       }
 
-      if (fetchedChannel instanceof TextChannel) {
-        sendableChannel = fetchedChannel;
-      } else if (fetchedChannel instanceof DMChannel) {
-        sendableChannel = fetchedChannel;
-      }
-    } catch (error) {
-      loggerService.logger.debug(
-        { channelId, err: error },
-        "Error fetching channel for typing simulation.",
-      );
-      return;
-    }
-
-    if (!sendableChannel || typeof sendableChannel.sendTyping !== "function") {
-      return;
-    }
-
-    const start = Date.now();
-    const burstIntervalMs = 3000;
-
-    while (true) {
-      try {
-        await sendableChannel.sendTyping().catch(() => {});
-      } catch (error) {
-        loggerService.logger.debug(
-          { channelId, err: error },
-          "Failed to send typing indicator.",
-        );
-        break;
+      if (!sendableChannel || typeof sendableChannel.sendTyping !== "function") {
+        return;
       }
 
-      // if (totalDelayMs === 0) {
-      //   break;
-      // }
+      const start = Date.now();
+      while (!signal.aborted) {
+        try {
+          await sendableChannel.sendTyping().catch(() => {});
+        } catch {
+          break;
+        }
 
-      const elapsed = Date.now() - start;
-      const remaining = totalDelayMs - elapsed;
-      if (remaining <= 0) {
-        break;
+        const elapsed = Date.now() - start;
+        if (elapsed >= totalDelayMs) {
+          break;
+        }
+
+        await this.delay(Math.min(burstIntervalMs, totalDelayMs - elapsed));
       }
+    };
 
-      await this.delay(Math.min(burstIntervalMs, remaining));
-    }
+    loop();
+
+    return {
+      stop: async () => {
+        controller.abort();
+      },
+    };
   }
 
   private applyEmotionDeltas(
