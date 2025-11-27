@@ -15,10 +15,10 @@ interface BackoffState {
   cooldownMs: number;
 }
 
-const CHECK_INTERVAL_MS = 120_000;
-const MIN_SILENCE_MS = 45 * 60 * 1000;
-const MIN_BETWEEN_BOT_MS = 30 * 60 * 1000;
-const BASE_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 120_000; // 2min
+const MIN_SILENCE_MS = 30 * 60 * 1000; // 30min
+const MIN_BETWEEN_BOT_MS = 30 * 60 * 1000; // 30min
+const BASE_COOLDOWN_MS = 1.5 * 60 * 60 * 1000; // 1.5hr
 const BACKOFF_MULTIPLIER = 1.6;
 const MAX_BACKOFF_MS = 12 * 60 * 60 * 1000;
 const JITTER_MS = 10 * 60 * 1000;
