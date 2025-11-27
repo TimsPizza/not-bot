@@ -110,6 +110,56 @@ class ContextManagerService {
     return Array.from(this.contextCache.values());
   }
 
+  public deleteMessageFromContext(
+    channelId: string,
+    messageId: string,
+  ): void {
+    const context =
+      this.contextCache.get(channelId) ?? this.getContext(channelId);
+    if (!context) {
+      return;
+    }
+    const updated = context.messages.filter((msg) => msg.id !== messageId);
+    if (updated.length === context.messages.length) {
+      return;
+    }
+    const next: ChannelContext = {
+      ...context,
+      messages: updated,
+      lastUpdatedAt: Date.now(),
+    };
+    this.contextCache.set(channelId, next);
+  }
+
+  public updateMessageContent(
+    channelId: string,
+    messageId: string,
+    newContent: string,
+  ): void {
+    const context =
+      this.contextCache.get(channelId) ?? this.getContext(channelId);
+    if (!context) {
+      return;
+    }
+    let mutated = false;
+    const updated = context.messages.map((msg) => {
+      if (msg.id === messageId) {
+        mutated = true;
+        return { ...msg, content: newContent, timestamp: Date.now() };
+      }
+      return msg;
+    });
+    if (!mutated) {
+      return;
+    }
+    const next: ChannelContext = {
+      ...context,
+      messages: updated,
+      lastUpdatedAt: Date.now(),
+    };
+    this.contextCache.set(channelId, next);
+  }
+
   public updateContext(
     channelId: string,
     serverId: string,

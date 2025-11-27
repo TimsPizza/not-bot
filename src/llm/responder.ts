@@ -300,7 +300,11 @@ class ResponderService {
       });
 
       for (const toolCall of toolCalls) {
-        const toolResult = await this.executeToolCall(toolCall);
+        const toolResult = await this.executeToolCall(
+          toolCall,
+          channelId,
+          botUserId,
+        );
         const serializedResult =
           typeof toolResult === "string"
             ? toolResult
@@ -333,11 +337,14 @@ class ResponderService {
 
   private async executeToolCall(
     toolCall: ChatCompletionMessageToolCall,
+    channelId: string,
+    botUserId: string,
   ): Promise<unknown> {
     try {
       return await agenticToolService.executeToolCall(
         toolCall.function.name,
         toolCall.function.arguments,
+        channelId,
       );
     } catch (error) {
       loggerService.logger.error(

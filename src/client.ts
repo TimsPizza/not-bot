@@ -13,6 +13,7 @@ import emotionService from "@/emotions";
 import { LLMRetryError, LLMServiceName } from "@/errors/LLMRetryError";
 import llmEvaluatorService from "@/llm/llm_evaluator";
 import responderService from "@/llm/responder";
+import agenticToolService from "@/llm/tools/index.js";
 import loggerService from "@/logger";
 import {
   cancelScheduledMessages,
@@ -23,6 +24,9 @@ import {
   rescheduleExistingProactiveMessage,
   scheduleProactiveMessage,
 } from "@/proactive";
+import SilenceTopicScheduler, {
+  setSilenceScheduler,
+} from "@/scheduler/silenceTopicScheduler";
 import {
   EmotionDeltaInstruction,
   EmotionDeltaSuggestion,
@@ -32,9 +36,6 @@ import {
   SimpleMessage,
   StructuredResponseSegment,
 } from "@/types";
-import SilenceTopicScheduler, {
-  setSilenceScheduler,
-} from "@/scheduler/silenceTopicScheduler";
 import {
   CacheType, // Added
   ChannelType,
@@ -44,6 +45,7 @@ import {
   GatewayIntentBits,
   Interaction,
   Message,
+  PartialMessage,
   Partials,
   TextChannel,
 } from "discord.js";
@@ -90,6 +92,38 @@ class BotClient {
       this.enqueueResponseSegments.bind(this),
     );
     setSilenceScheduler(this.silenceTopicScheduler);
+
+    agenticToolService.onToolActivity(async ({ channelId, description }) => {
+      if (!channelId) {
+        return;
+      }
+      try {
+        const fetchedChannel = await this.client.channels.fetch(channelId);
+        const sendableChannel =
+          fetchedChannel instanceof TextChannel
+            ? fetchedChannel
+            : fetchedChannel instanceof DMChannel
+              ? fetchedChannel
+              : null;
+        if (!sendableChannel) {
+          return;
+        }
+        const sentMessage = await sendableChannel.send({
+          content: `Bot is ${description}...`,
+          allowedMentions: { parse: [] },
+        });
+        this.addBotMessageToContext(
+          channelId,
+          sentMessage,
+          sentMessage.content,
+        );
+      } catch (error) {
+        loggerService.logger.warn(
+          { channelId, err: error },
+          "Failed to send tool activity message.",
+        );
+      }
+    });
   }
 
   /**
@@ -107,6 +141,8 @@ class BotClient {
     });
 
     this.client.on(Events.MessageCreate, this.handleMessageCreate.bind(this));
+    this.client.on(Events.MessageDelete, this.handleMessageDelete.bind(this));
+    this.client.on(Events.MessageUpdate, this.handleMessageUpdate.bind(this));
     this.client.on(
       Events.InteractionCreate,
       this.handleInteractionCreate.bind(this),
@@ -232,6 +268,51 @@ class BotClient {
 
     // 4. Add to Buffer
     bufferQueueService.addMessage(simpleMessage);
+  }
+
+  private async handleMessageDelete(
+    message: Message | PartialMessage,
+  ): Promise<void> {
+    if (!message.id || !message.channelId) {
+      return;
+    }
+    try {
+      const channelId = message.channelId;
+      contextManagerService.deleteMessageFromContext(
+        channelId,
+        message.id ?? "",
+      );
+    } catch (error) {
+      loggerService.logger.debug(
+        { err: error, messageId: message.id },
+        "Failed to handle message delete for context.",
+      );
+    }
+  }
+
+  private async handleMessageUpdate(
+    oldMessage: Message | PartialMessage | null,
+    newMessage: Message | PartialMessage,
+  ): Promise<void> {
+    if (!newMessage.id || !newMessage.channelId) {
+      return;
+    }
+    try {
+      const content = newMessage.content ?? "";
+      if (!content) {
+        return;
+      }
+      contextManagerService.updateMessageContent(
+        newMessage.channelId,
+        newMessage.id,
+        content,
+      );
+    } catch (error) {
+      loggerService.logger.debug(
+        { err: error, messageId: newMessage.id },
+        "Failed to handle message update for context.",
+      );
+    }
   }
 
   /**

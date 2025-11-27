@@ -2,15 +2,24 @@ import loggerService from "@/logger";
 import { BraveSearchClient } from "@agentic/brave-search";
 import { AIFunctionLike, AIFunctionSet } from "@agentic/core";
 import { ExaClient } from "@agentic/exa";
+import { EventEmitter } from "events";
 import { ChatCompletionTool } from "openai/resources/chat/completions";
+
+type ToolActivityListener = (payload: {
+  toolName: string;
+  channelId?: string;
+  description: string;
+}) => void;
 
 class AgenticToolService {
   private static instance: AgenticToolService;
 
   private toolSet: AIFunctionSet;
+  private emitter: EventEmitter;
 
   private constructor() {
     const providers: AIFunctionLike[] = [];
+    this.emitter = new EventEmitter();
 
     const braveApiKey = process.env.BRAVE_SEARCH_API_KEY;
     if (braveApiKey) {
@@ -77,6 +86,7 @@ class AgenticToolService {
   public async executeToolCall(
     toolName: string,
     rawArguments: string,
+    channelId?: string,
   ): Promise<unknown> {
     const fn = this.toolSet.get(toolName);
     if (!fn) {
@@ -84,8 +94,30 @@ class AgenticToolService {
     }
 
     loggerService.logger.info({ toolName }, "Executing Agentic tool call.");
+    if (channelId) {
+      this.emitActivity(toolName, channelId);
+    }
 
     return fn(rawArguments);
+  }
+
+  public onToolActivity(listener: ToolActivityListener): void {
+    this.emitter.on("activity", listener);
+  }
+
+  private emitActivity(toolName: string, channelId: string): void {
+    const description = this.describeTool(toolName);
+    this.emitter.emit("activity", { toolName, channelId, description });
+  }
+
+  private describeTool(toolName: string): string {
+    const map: Record<string, string> = {
+      brave_search: "browsing the internet",
+      exa_search: "gathering deeper research",
+      exa_findsimilar: "gathering deeper research",
+      exa_topics: "gathering deeper research",
+    };
+    return map[toolName] ?? "collecting external information";
   }
 }
 

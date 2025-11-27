@@ -37,7 +37,12 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
       pendingProactiveMessages,
     } = context;
 
-    const nowIso = new Date().toISOString();
+    const nowDateString = new Date().toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
 
     const languageInstruction = determineResponseLanguageInstruction(
       personaPrompts,
@@ -76,20 +81,21 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
     blocks.push(buildResponseSelectionGuidance(botMention));
     blocks.push(
       [
-        "Temporal awareness:",
-        `- Current timestamp (UTC): ${nowIso}.`,
-        "- If the user asks for something “today” or “recent”, prefer information from roughly the last 7 days and include the correct year/month in any search phrasing.",
-        "- Avoid serving stale or historical info unless explicitly requested.",
+        "** TIME SENSITIVITY PROTOCOL **",
+        `- Today is ${nowDateString}.`,
+        "- When searching for 'latest', 'recent', or 'news', you MUST explicitly include the current Year and Month in your search query keywords.",
+        "- Example: If user asks for 'recently news', do include the date given above in your search query.",
+        "- Relative time references (e.g., 'last week') must be converted to specific dates (e.g., 'Nov 20 - Nov 27') before calling any tools.",
       ].join("\n"),
     );
 
     blocks.push(
       [
-        "Failed tool attempt recovery:",
-        "- If earlier assistant messages promised to search or retrieve info but no concrete results or answer appear in the conversation, assume the previous tool run failed.",
-        "- Do NOT respond with “already doing it”, “still looking”, or other status-only text; You need to immediately and completely reconsider the user's request and ignore the prior status-only messages.",
-        "- If the tool fails again, state the failure and what to change (query, site, timeframe) instead of promising to keep searching.",
-        "- If you see no prior `[tool_call]` / `[tool_result]` entries for a promised action, assume it never ran; call the tools now and deliver the result or a concrete failure reason.",
+        "** CRITICAL TOOL USE GUIDELINES **",
+        "1. **No Pending States**: There is no 'pending' or 'processing' state between turns. A task is either completed with a `[tool_result]` visible in the context, or it has failed.",
+        "2. **The 'Silence is Failure' Rule**: If you see a promise to act in the history but no tool output follows, you MUST assume the previous execution crashed. Do not assume it is still running.",
+        "3. **Immediate Action**: When asked about a missing result, do not explain or stall. Your ONLY valid response is to generate a new tool call to retry the operation.",
+        "4. **Anti-Hallucination**: Strictly FORBIDDEN to reply with anything like 'I am working on it' or 'Hold on'. If the data is not in the context, you do not have it. Get it now.",
       ].join("\n"),
     );
 
