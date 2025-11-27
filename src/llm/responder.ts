@@ -2,6 +2,7 @@
 import configService from "@/config";
 import contextManagerService from "@/context";
 import { LLMRetryError } from "@/errors/LLMRetryError";
+import agenticToolService from "@/llm/tools";
 import loggerService from "@/logger";
 import type { BuiltPrompt } from "@/prompt";
 import { PromptBuilder } from "@/prompt";
@@ -17,9 +18,13 @@ import {
   StructuredResponseSegment,
 } from "@/types";
 import { retryWithExponentialBackoff } from "@/utils/retry";
-import { callChatCompletionApi } from "./openai_client";
+import {
+  ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
+  ChatCompletionTool,
+} from "openai/resources/chat/completions";
+import { callChatCompletionApi, getOpenAIClient } from "./openai_client";
 import { parseStructuredJson } from "./structuredJson";
-import { parse } from "json5";
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
   "affinity",
@@ -31,6 +36,7 @@ const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
 const RESPONDER_MAX_ATTEMPTS = 5;
 const RESPONDER_BASE_DELAY_MS = 10_000;
 const RESPONDER_MAX_DELAY_MS = 60_000;
+const RESPONDER_MAX_TOOL_ITERATIONS = 5;
 
 class ResponderService {
   private static instance: ResponderService;
@@ -132,7 +138,12 @@ class ResponderService {
         pendingProactiveMessages: emotionContext?.pendingProactiveMessages,
       });
 
-      const result = await this.callResponderModelWithRetry(prompt, channelId);
+      const availableTools = agenticToolService.getToolSpecs();
+      const result = await this.callResponderModelWithRetry(
+        prompt,
+        channelId,
+        availableTools,
+      );
       return result;
     } catch (error) {
       if (error instanceof LLMRetryError) {
@@ -146,17 +157,14 @@ class ResponderService {
   private async callResponderModelWithRetry(
     prompt: BuiltPrompt,
     channelId: string,
+    tools: ChatCompletionTool[],
   ): Promise<ResponderResult | null> {
     try {
-      // should check shape and throw err here
       return await retryWithExponentialBackoff(
         async () => {
-          const rawResponse = await callChatCompletionApi(
-            "main",
-            this.config!.primaryLlmModel,
-            prompt.messages,
-            prompt.temperature,
-            prompt.maxTokens,
+          const rawResponse = await this.runResponderConversation(
+            prompt,
+            tools,
           );
 
           if (!rawResponse) {
@@ -213,6 +221,117 @@ class ResponderService {
       );
       throw new LLMRetryError("responder", RESPONDER_MAX_ATTEMPTS, error);
     }
+  }
+
+  private async runResponderConversation(
+    prompt: BuiltPrompt,
+    tools: ChatCompletionTool[],
+  ): Promise<string | null> {
+    if (!tools.length) {
+      return callChatCompletionApi(
+        "main",
+        this.config!.primaryLlmModel,
+        prompt.messages,
+        prompt.temperature,
+        prompt.maxTokens,
+      );
+    }
+
+    const messageHistory: ChatCompletionMessageParam[] = [...prompt.messages];
+    const client = getOpenAIClient("main");
+    let iterations = 0;
+
+    while (iterations < RESPONDER_MAX_TOOL_ITERATIONS) {
+      const completion = await client.chat.completions.create({
+        model: this.config!.primaryLlmModel,
+        messages: messageHistory,
+        temperature: prompt.temperature,
+        max_tokens: prompt.maxTokens,
+        tool_choice: "auto",
+        tools,
+      });
+
+      const choice = completion.choices[0];
+      if (!choice) {
+        throw new Error("Responder LLM returned no choices.");
+      }
+
+      const assistantMessage = choice.message;
+      const toolCalls = assistantMessage.tool_calls;
+
+      if (!toolCalls || toolCalls.length === 0) {
+        const content = this.normalizeAssistantContent(
+          assistantMessage.content,
+        );
+        if (!content.trim()) {
+          throw new Error("Responder LLM returned empty assistant content.");
+        }
+        return content;
+      }
+
+      messageHistory.push({
+        role: "assistant",
+        content: assistantMessage.content ?? "",
+        tool_calls: toolCalls,
+      });
+
+      for (const toolCall of toolCalls) {
+        const toolResult = await this.executeToolCall(toolCall);
+        const serializedResult =
+          typeof toolResult === "string"
+            ? toolResult
+            : JSON.stringify(toolResult);
+
+        messageHistory.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: serializedResult,
+        });
+      }
+
+      iterations += 1;
+    }
+
+    throw new Error(
+      `Responder LLM exceeded tool iteration limit (${RESPONDER_MAX_TOOL_ITERATIONS}).`,
+    );
+  }
+
+  private async executeToolCall(
+    toolCall: ChatCompletionMessageToolCall,
+  ): Promise<unknown> {
+    try {
+      return await agenticToolService.executeToolCall(
+        toolCall.function.name,
+        toolCall.function.arguments,
+      );
+    } catch (error) {
+      loggerService.logger.error(
+        {
+          toolName: toolCall.function.name,
+          err: error,
+        },
+        "Agentic tool execution failed.",
+      );
+      throw error;
+    }
+  }
+
+  private normalizeAssistantContent(
+    content: ChatCompletionMessageParam["content"],
+  ): string {
+    if (!content) {
+      return "";
+    }
+
+    if (typeof content === "string") {
+      return content;
+    }
+
+    return content
+      .map((part: any) => ("text" in part && part.text ? part.text : ""))
+      .join("\n")
+      .trim();
   }
 
   private parseResponderOutput(raw: string): ResponderResult | null {

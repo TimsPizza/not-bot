@@ -16,6 +16,10 @@
   "license": "ISC",
   "packageManager": "pnpm@10.7.1",
   "dependencies": {
+    "@agentic/brave-search": "^7.6.9",
+    "@agentic/core": "^8.4.4",
+    "@agentic/duck-duck-go": "^7.6.9",
+    "@agentic/exa": "^7.6.9",
     "@discordjs/rest": "^2.4.3",
     "@libsql/client": "^0.15.15",
     "@types/json5": "^2.2.0",
@@ -37,6 +41,7 @@
     "@types/fs-extra": "^11.0.4",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.14.1",
+    "core": "link:@types/agentic/core",
     "drizzle-kit": "^0.31.4",
     "pino-pretty": "^13.0.0",
     "tsx": "^4.19.3",

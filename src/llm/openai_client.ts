@@ -16,6 +16,10 @@ const MAIN_CLIENT = new OpenAI({
   apiKey: config.primaryLlmApiKey,
 });
 
+export function getOpenAIClient(clientType: "main" | "eval"): OpenAI {
+  return clientType === "main" ? MAIN_CLIENT : EVAL_CLIENT;
+}
+
 /**
  * @description Calls an OpenAI-compatible chat completion API.
  * @param apiKey The API key.
