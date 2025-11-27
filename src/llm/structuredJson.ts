@@ -63,12 +63,14 @@ function stringifyAndParse(target: unknown): any {
   return JSON.parse(JSON.stringify(target));
 }
 
+// Does not throw
 export function parseStructuredJson(
   raw: string,
   context: string,
-): Record<string, unknown> | unknown[] | null {
+  // [parsed json obj, error message]
+): [Record<string, unknown> | null, string | null] {
   if (!raw) {
-    return null;
+    return [null, "Empty payload"];
   }
 
   let sanitized = sanitizePayload(raw);
@@ -80,7 +82,7 @@ export function parseStructuredJson(
 
   try {
     const repaired = jsonrepair(sanitized);
-    return JSON.parse(repaired);
+    return [JSON.parse(repaired), null];
   } catch (primaryError) {
     try {
       const parsed = JSON5.parse(sanitized);
@@ -89,7 +91,7 @@ export function parseStructuredJson(
         { context },
         "Structured JSON parsed via JSON5 fallback.",
       );
-      return reserialized;
+      return [reserialized, null];
     } catch (fallbackError) {
       const sample = sanitized.slice(0, 800);
       loggerService.logger.warn(
@@ -105,7 +107,12 @@ export function parseStructuredJson(
         },
         "Failed to parse structured JSON payload.",
       );
-      return null;
+      return [
+        null,
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : String(fallbackError),
+      ];
     }
   }
 }

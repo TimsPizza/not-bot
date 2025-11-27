@@ -329,7 +329,8 @@ class TopicStarterService {
     }
     const jsonMatch = trimmed.match(/```json\s*([\s\S]+?)\s*```/i);
     const candidate = jsonMatch && jsonMatch[1] ? jsonMatch[1].trim() : trimmed;
-    const parsed = parseStructuredJson(candidate, "responder");
+    const [parsed, err] = parseStructuredJson(candidate, "responder");
+    // json should not be wrapped in an array so filter it out
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return null;
     }

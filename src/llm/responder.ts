@@ -283,8 +283,7 @@ class ResponderService {
           content: [
             "Your last response was invalid.",
             error ? `Issue: ${error}.` : null,
-            "If you intended to call a tool or the history tool calls were not completed, or the users explicitly questioned that whether your previous responses were incorrect, emit a proper tool call now.",
-            "If you confirm that proper tool calls results have been gathered and intend to finish , re-emit a single response as a JSON code block using the exact given shape",
+            "If you previously intended to call a tool, this means a failure. You must do it again",
           ]
             .filter(Boolean)
             .join(" "),
@@ -406,18 +405,20 @@ class ResponderService {
       return { result: null, error: message };
     }
   }
-
+  // throws
   private parseResponderOutput(raw: string): ResponderResult | null {
     if (!raw) {
-      throw new Error("Empty responder LLM response.");
+      throw new Error("Empty LLM response.");
     }
 
-    const parsed = parseStructuredJson(raw, "responder");
+    const [parsed, err] = parseStructuredJson(raw, "responder");
     if (!parsed) {
-      throw new Error("Failed to parse responder LLM response as JSON.");
+      throw new Error(
+        "Failed to parse response as JSON: " + (err ?? "unknown error"),
+      );
     }
     if (!this.isParsedJsonExpectedShape(parsed)) {
-      throw new Error("Unexpected responder LLM response shape");
+      throw new Error("Unexpected LLM response shape");
     }
 
     let segmentsSource: unknown;
