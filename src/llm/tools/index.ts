@@ -1,7 +1,7 @@
 import loggerService from "@/logger";
 import { BraveSearchClient } from "@agentic/brave-search";
-import { ExaClient } from "@agentic/exa";
 import { AIFunctionLike, AIFunctionSet } from "@agentic/core";
+import { ExaClient } from "@agentic/exa";
 import { ChatCompletionTool } from "openai/resources/chat/completions";
 
 class AgenticToolService {
@@ -18,7 +18,7 @@ class AgenticToolService {
         const braveClient = new BraveSearchClient({
           apiKey: braveApiKey,
         });
-        providers.push(braveClient.functions) as unknown as AIFunctionLike;
+        providers.push(braveClient.functions as unknown as AIFunctionLike);
       } catch (error) {
         loggerService.logger.error(
           { err: error },

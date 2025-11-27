@@ -23,7 +23,7 @@ import {
   ChatCompletionMessageToolCall,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import { callChatCompletionApi, getOpenAIClient } from "./openai_client";
+import { getOpenAIClient } from "./openai_client";
 import { parseStructuredJson } from "./structuredJson";
 
 const SUPPORTED_EMOTION_METRICS: EmotionMetric[] = [
@@ -37,6 +37,7 @@ const RESPONDER_MAX_ATTEMPTS = 5;
 const RESPONDER_BASE_DELAY_MS = 10_000;
 const RESPONDER_MAX_DELAY_MS = 60_000;
 const RESPONDER_MAX_TOOL_ITERATIONS = 5;
+const RESPONDER_MAX_SCHEMA_REPAIRS = 2;
 
 class ResponderService {
   private static instance: ResponderService;
@@ -162,35 +163,11 @@ class ResponderService {
     try {
       return await retryWithExponentialBackoff(
         async () => {
-          const rawResponse = await this.runResponderConversation(
-            prompt,
-            tools,
-          );
-
-          if (!rawResponse) {
+          const result = await this.runResponderConversation(prompt, tools);
+          if (!result) {
             throw new Error("Responder LLM returned null response.");
           }
-
-          const trimmed = rawResponse.trim();
-          if (!trimmed) {
-            throw new Error("Responder LLM returned empty response.");
-          }
-          if (trimmed.toLowerCase().includes("as an ai language model")) {
-            loggerService.logger.warn(
-              "LLM response contained boilerplate AI disclaimer. Discarding.",
-            );
-            throw new Error("Responder LLM returned AI disclaimer.");
-          }
-          const jsonMatch = trimmed.match(/```json\s*([\s\S]+?)\s*```/);
-          const matchResult = jsonMatch && jsonMatch[1] ? jsonMatch[1] : null;
-          if (!matchResult) {
-            loggerService.logger.warn(
-              "Responder LLM response did not contain JSON code block. Attempting to parse entire response.",
-            );
-            throw new Error("Responder LLM returned unexpected response");
-          }
-          const parsed = this.parseResponderOutput(matchResult);
-          return parsed;
+          return result;
         },
         {
           maxAttempts: RESPONDER_MAX_ATTEMPTS,
@@ -226,29 +203,28 @@ class ResponderService {
   private async runResponderConversation(
     prompt: BuiltPrompt,
     tools: ChatCompletionTool[],
-  ): Promise<string | null> {
-    if (!tools.length) {
-      return callChatCompletionApi(
-        "main",
-        this.config!.primaryLlmModel,
-        prompt.messages,
-        prompt.temperature,
-        prompt.maxTokens,
-      );
-    }
-
+  ): Promise<ResponderResult | null> {
     const messageHistory: ChatCompletionMessageParam[] = [...prompt.messages];
     const client = getOpenAIClient("main");
-    let iterations = 0;
+    let attempts = 0;
+    let toolIterations = 0;
+    let schemaRepairs = 0;
 
-    while (iterations < RESPONDER_MAX_TOOL_ITERATIONS) {
+    while (
+      attempts <
+      RESPONDER_MAX_TOOL_ITERATIONS + RESPONDER_MAX_SCHEMA_REPAIRS
+    ) {
+      attempts += 1;
+      const allowTools =
+        tools.length > 0 && toolIterations < RESPONDER_MAX_TOOL_ITERATIONS;
       const completion = await client.chat.completions.create({
         model: this.config!.primaryLlmModel,
         messages: messageHistory,
+        reasoning_effort: "medium",
         temperature: prompt.temperature,
         max_tokens: prompt.maxTokens,
-        tool_choice: "auto",
-        tools,
+        tool_choice: allowTools ? "auto" : "none",
+        tools: allowTools ? tools : undefined,
       });
 
       const choice = completion.choices[0];
@@ -266,7 +242,37 @@ class ResponderService {
         if (!content.trim()) {
           throw new Error("Responder LLM returned empty assistant content.");
         }
-        return content;
+
+        messageHistory.push({
+          role: "assistant",
+          content: assistantMessage.content ?? "",
+        });
+
+        const { result, error } = this.tryParseResponderContent(content);
+        if (result) {
+          return result;
+        }
+
+        schemaRepairs += 1;
+        if (schemaRepairs > RESPONDER_MAX_SCHEMA_REPAIRS) {
+          throw new Error(
+            "Responder LLM returned unparseable content after schema repairs.",
+          );
+        }
+
+        messageHistory.push({
+          role: "user",
+          content: [
+            "Your last response was invalid.",
+            error ? `Issue: ${error}.` : null,
+            "If you intended to call a tool, emit a proper tool call now (do not place tool instructions in message content).",
+            "If you intended to finish, re-emit a single response as a JSON code block using the exact given shape",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        });
+
+        continue;
       }
 
       messageHistory.push({
@@ -289,11 +295,12 @@ class ResponderService {
         });
       }
 
-      iterations += 1;
+      toolIterations += 1;
+      continue;
     }
 
     throw new Error(
-      `Responder LLM exceeded tool iteration limit (${RESPONDER_MAX_TOOL_ITERATIONS}).`,
+      `Responder LLM failed to produce valid output within tool (${RESPONDER_MAX_TOOL_ITERATIONS}) and schema repair (${RESPONDER_MAX_SCHEMA_REPAIRS}) limits.`,
     );
   }
 
@@ -332,6 +339,38 @@ class ResponderService {
       .map((part: any) => ("text" in part && part.text ? part.text : ""))
       .join("\n")
       .trim();
+  }
+
+  private tryParseResponderContent(content: string): {
+    result: ResponderResult | null;
+    error?: string;
+  } {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return { result: null, error: "Empty assistant content." };
+    }
+    if (trimmed.toLowerCase().includes("as an ai language model")) {
+      return { result: null, error: "Contained AI boilerplate disclaimer." };
+    }
+
+    const jsonMatch = trimmed.match(/```json\s*([\s\S]+?)\s*```/i);
+    const candidate = jsonMatch && jsonMatch[1] ? jsonMatch[1].trim() : trimmed;
+
+    try {
+      const parsed = this.parseResponderOutput(candidate);
+      if (!parsed) {
+        return { result: null, error: "Parsed JSON contained no messages." };
+      }
+      return { result: parsed };
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unknown responder parse error";
+      loggerService.logger.warn(
+        { err: message },
+        "Responder content failed schema parse.",
+      );
+      return { result: null, error: message };
+    }
   }
 
   private parseResponderOutput(raw: string): ResponderResult | null {

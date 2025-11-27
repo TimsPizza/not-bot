@@ -37,6 +37,8 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
       pendingProactiveMessages,
     } = context;
 
+    const nowIso = new Date().toISOString();
+
     const languageInstruction = determineResponseLanguageInstruction(
       personaPrompts,
       context.languageConfig,
@@ -72,6 +74,14 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
     }
 
     blocks.push(buildResponseSelectionGuidance(botMention));
+    blocks.push(
+      [
+        "Temporal awareness:",
+        `- Current timestamp (UTC): ${nowIso}.`,
+        "- If the user asks for something “today” or “recent”, prefer information from roughly the last 7 days and include the correct year/month in any search phrasing.",
+        "- Avoid serving stale or historical info unless explicitly requested.",
+      ].join("\n"),
+    );
 
     if (pendingProactiveMessages && pendingProactiveMessages.length > 0) {
       blocks.push(formatPendingProactiveMessageBlock(pendingProactiveMessages));
