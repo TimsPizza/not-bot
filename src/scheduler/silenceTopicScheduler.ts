@@ -205,14 +205,8 @@ export class SilenceTopicScheduler {
   }
 
   private buildTopicSystemPrompt(base: string): string {
-    return [
-      base,
-      "You are proactively starting a conversation after a quiet period. Goals:",
-      "- Find a friendly, low-awkwardness topic based on recent channel history.",
-      "- You may @ a preferred user if the emotion context suggests positive affinity or curiosity toward them.",
-      "- Avoid promising to execute tasks; focus on opening a light dialogue (questions, observations, quick tips).",
-      "- Keep it short and engaging; avoid spammy multiple messages unless necessary for clarity.",
-    ].join("\n\n");
+    // Topic-starter instructions now live in the topic starter assembler to avoid duplication/conflicts.
+    return base;
   }
 
   private getLastHumanTimestamp(messages: SimpleMessage[]): number | null {

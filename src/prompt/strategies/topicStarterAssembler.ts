@@ -40,7 +40,22 @@ export class TopicStarterPromptAssembler extends BasePromptAssembler<TopicStarte
       BOT_USER_ID: context.botUserId,
     });
 
-    const blocks: string[] = [resolvedPrompt];
+    const executionContract = [
+      "SYSTEM ROLE & OUTPUT CONTRACT:",
+      "- You are the Discord topic-starter compiler: consume persona/style/context data and emit only the final JSON response (schema is provided in a later system message).",
+      "- Do not role-play or add meta commentary; persona data shapes tone only.",
+      "- If tools are required, call them; otherwise jump straight to JSON output. No prefaces, no explanations outside the schema.",
+    ].join("\n");
+
+    const hooksGuidance = [
+      "Context mining rules for topic starters:",
+      "- Mine the recent conversation for hooks (inside jokes, unresolved questions, observations) instead of echoing the last message or your own prior line.",
+      "- Avoid parroting the most recent human/bot message; rephrase or pivot to a related but fresh angle.",
+      "- Vary who you address; do not repeatedly target the same user without cause.",
+      "- If nothing usable is present, keep it concise or gracefully bow out rather than repeating context.",
+    ].join("\n");
+
+    const blocks: string[] = [executionContract, resolvedPrompt];
 
     const usernameMapping = buildUsernameMappingBlock(contextMessages);
     if (usernameMapping) {
@@ -54,6 +69,8 @@ export class TopicStarterPromptAssembler extends BasePromptAssembler<TopicStarte
     if (relationshipHints) {
       blocks.push(relationshipHints);
     }
+
+    blocks.push(hooksGuidance);
 
     blocks.push(
       [

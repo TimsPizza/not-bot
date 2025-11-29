@@ -58,7 +58,15 @@ export class ResponsePromptAssembler extends BasePromptAssembler<ResponsePromptC
       BOT_USER_ID: context.botUserId,
     });
 
-    const blocks: string[] = [resolvedPrompt];
+    const executionContract = [
+      "SYSTEM ROLE & OUTPUT CONTRACT:",
+      "- You are the Discord responder compiler: consume persona/style/context data and emit only the final JSON response (schema is provided in a later system message).",
+      "- Do not role-play or add meta commentary; the persona data is for tone/style of the messages you output.",
+      "- If tools are required, call them; if tools already ran and produced results, skip status text and move straight to JSON output.",
+      "- Do not emit anything outside the schema block; no prefaces, no explanations.",
+    ].join("\n");
+
+    const blocks: string[] = [executionContract, resolvedPrompt];
 
     const usernameMapping = buildUsernameMappingBlock(contextMessages);
     if (usernameMapping) {
